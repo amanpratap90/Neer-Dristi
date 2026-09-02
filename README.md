@@ -68,8 +68,8 @@ The model predicts. The risk engine interprets. The alert engine classifies oper
 The frontend never calculates flood probability.
 
 
-2. THE PROBLEM
-==============================================================================
+2. THE PROBLEM:-
+
 Flooding is not caused by one variable. Heavy rainfall can create little flooding in one location and severe flooding in another because terrain, soil, drainage, river state, land cover and exposure are different.
 
 Therefore:
