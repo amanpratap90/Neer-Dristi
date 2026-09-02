@@ -17,7 +17,7 @@ The implemented production chain includes the production feature/risk pipeline, 
 
 
 1. EXECUTIVE SUMMARY
-==============================================================================
+---------------------
 ChetakAI takes a latitude and longitude and converts that location into a structured flood-intelligence report.
 
 High-level flow:
@@ -69,7 +69,7 @@ The frontend never calculates flood probability.
 
 
 2. THE PROBLEM:-
-
+---------------------
 Flooding is not caused by one variable. Heavy rainfall can create little flooding in one location and severe flooding in another because terrain, soil, drainage, river state, land cover and exposure are different.
 
 Therefore:
@@ -92,7 +92,7 @@ ChetakAI aims to answer:
 
 
 3. DESIGN PRINCIPLES
-==============================================================================
+---------------------
 1. DATA FIRST
 Data quality and spatial/temporal alignment come before model complexity.
 
@@ -114,7 +114,7 @@ Critical model inputs and contracts are validated before inference.
 
 
 4. DATA COLLECTION STRATEGY
-==============================================================================
+---------------------
 ChetakAI does not begin by attempting to download every dataset for all of India. V1 uses a controlled basin-oriented strategy.
 
 The workflow is:
@@ -135,7 +135,7 @@ The purpose of basin selection is reproducibility, manageable data volume and me
 
 
 5. RAINFALL DATA
-==============================================================================
+---------------------
 ROLE
 Rainfall represents water entering the land/basin system.
 
@@ -169,7 +169,7 @@ A: Different flood mechanisms operate at different time scales.
 
 
 6. HISTORICAL FLOOD EVENTS
-==============================================================================
+---------------------
 ROLE
 Historical flood events provide examples linking environmental conditions to observed flood outcomes.
 
@@ -197,7 +197,7 @@ A: Different records can be point reports, administrative reports or satellite-d
 
 
 7. DEM AND TERRAIN
-==============================================================================
+---------------------
 DEM means Digital Elevation Model. ChetakAI uses approximately 30 m class terrain sources such as Copernicus DEM/SRTM-derived data.
 
 The project maintained a large DEM tile inventory and preserved the required terrain data.
@@ -232,7 +232,7 @@ A: Existing validated terrain data is an important project asset. Re-downloading
 
 
 8. HYDROGRAPHY AND RESERVOIRS
-==============================================================================
+---------------------
 Hydrography describes the drainage network.
 
 FEATURES USED/AVAILABLE
@@ -262,7 +262,7 @@ A: No. It is contextual information, not a complete hydrological model.
 
 
 9. RIVER WATER LEVEL AND DISCHARGE
-==============================================================================
+---------------------
 ROLE
 River observations describe the hydrological state directly.
 
@@ -287,7 +287,7 @@ A: The field is marked unavailable. The system must not invent a level. Other va
 
 
 10. SOIL DATA
-==============================================================================
+---------------------
 Soil controls infiltration and runoff.
 
 FEATURES
