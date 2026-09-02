@@ -1,0 +1,250 @@
+{
+  "model_probability": {
+    "key": "model_probability",
+    "name": "Machine Learning Flood Probability",
+    "category": "Risk & Prediction",
+    "unit": "%",
+    "description": "Empirical probability of active or impending flooding calculated by ChetakAI's tabular ensemble machine learning model (HistGradientBoosting / RandomForest) trained on multi-temporal physical and meteorological contracts.",
+    "flood_importance": "Serves as the primary data-driven statistical predictor of inundation, combining satellite observations, topography, and hydrometeorology.",
+    "calculation_method": "Calibrated probabilistic inference from 60 physical features validated with Brier-score and ROC-AUC optimization.",
+    "thresholds": {
+      "low": "< 35%",
+      "moderate": "35% - 60%",
+      "high": "60% - 80%",
+      "severe": "> 80%"
+    },
+    "translations": {
+      "hi": {
+        "name": "मशीन लर्निंग बाढ़ संभावना",
+        "description": "चेतक एआई के प्रशिक्षित मशीन लर्निंग मॉडल द्वारा गणना की गई बाढ़ की अनुभवजन्य संभावना।"
+      },
+      "bn": {
+        "name": "মেশিন লার্নিং বন্যা সম্ভাবনা",
+        "description": "চেতক এআই এর প্রশিক্ষিত মেশিন লার্নিং মডেল দ্বারা গণনাকৃত বন্যার সম্ভাব্য হার।"
+      },
+      "mr": {
+        "name": "मशीन लर्निंग पूर संभाव्यता",
+        "description": "चेतक एआय च्या मशीन लर्निंग मॉडेलद्वारे मोजलेली पुराची संभाव्यता."
+      },
+      "te": {
+        "name": "మెషిన్ లెర్నింగ్ వరద సంభావ్యత",
+        "description": "చేతక్ AI మోడల్ ద్వారా లెక్కించబడిన వరద వచ్చే సంభావ్యత శాతం."
+      },
+      "ta": {
+        "name": "இயந்திர வழி வெள்ள சாத்தியக்கூறு",
+        "description": "சேதக் AI இன் இயந்திர கற்றல் மாதிரியால் கணக்கிடப்பட்ட வெள்ள அபாய சாத்தியக்கூறு."
+      }
+    }
+  },
+  "risk_score": {
+    "key": "risk_score",
+    "name": "Compound Flood Risk Score",
+    "category": "Risk & Prediction",
+    "unit": "/100",
+    "description": "Synthesized risk index combining calibrated ML probability, rainfall volume, terrain slope susceptibility, hydrological loading, soil runoff coefficient, and infrastructure exposure.",
+    "flood_importance": "Provides a holistic single-metric risk classification for civil defense and emergency decision makers.",
+    "calculation_method": "Weighted multi-criteria decision index: ML Probability (50%), Rainfall (15%), Forecast NWP (10%), Hydrology (10%), Terrain (5%), Soil Runoff (5%), Exposure (5%).",
+    "thresholds": {
+      "low": "< 40",
+      "moderate": "40 - 65",
+      "high": "65 - 80",
+      "severe": "> 80"
+    },
+    "translations": {
+      "hi": {
+        "name": "समग्र बाढ़ जोखिम स्कोर",
+        "description": "मौसम, ढलान, मिट्टी और जल प्रवाह का एकीकृत समग्र जोखिम सूचकांक।"
+      },
+      "bn": {
+        "name": "যৌথ বন্যা ঝুঁকি স্কোর",
+        "description": "আবহাওয়া, মাটির জলধারণ এবং ভূসংস্থানের সমন্বিত ঝুঁকি সূচক।"
+      },
+      "mr": {
+        "name": "एकत्रित पूर जोखीम धावसंख्या",
+        "description": "हवामान, माती व नदी प्रवाहाचा एकत्रित जोखीम निर्देशांक."
+      },
+      "te": {
+        "name": "సమగ్ర వరద ముప్పు స్కోర్",
+        "description": "వర్షపాతం, ఉపరితలం మరియు మట్టి తేమ ఆధారిత సమగ్ర ప్రమాద సూచిక."
+      },
+      "ta": {
+        "name": "கூட்டு வெள்ள அபாய மதிப்பீடு",
+        "description": "மழை, மண்வளம் மற்றும் நிலப்பரப்பை இணைக்கும் ஒருங்கிணைந்த அபாயக் குறியீடு."
+      }
+    }
+  },
+  "rainfall_1h_proxy": {
+    "key": "rainfall_1h_proxy",
+    "name": "1-Hour Rainfall Intensity",
+    "category": "Meteorology & Radar",
+    "unit": "mm",
+    "description": "Total precipitation recorded in the localized sub-basin catchment during the past 60 minutes via Doppler radar proxies and satellite sensors.",
+    "flood_importance": "Critical for detecting flash flood hazards and urban pluvial drainage saturation.",
+    "calculation_method": "Aggregated satellite GPM/IMD radar reflectivity calibrated with ground automatic weather stations (AWS).",
+    "thresholds": {
+      "low": "< 10 mm",
+      "moderate": "10 - 25 mm",
+      "high": "25 - 50 mm",
+      "severe": "> 50 mm (Flash Flood Alert)"
+    },
+    "translations": {
+      "hi": { "name": "1 घंटे की वर्षा तीव्रता", "description": "पिछले 1 घंटे में दर्ज की गई स्थानीय वर्षा की मात्रा।" },
+      "bn": { "name": "১ ঘণ্টার বৃষ্টির তীব্রতা", "description": "বিগত ১ ঘণ্টায় রেকর্ড করা স্থানীয় বৃষ্টিপাতের পরিমাণ।" },
+      "mr": { "name": "१ तासाची पाऊस तीव्रता", "description": "मागील एका तासात झालेला एकूण पाऊस." },
+      "te": { "name": "1 గంట వర్షపాతం తీవ్రత", "description": "గత గంటలో కురిసిన స్థానిక వర్షపాతం." },
+      "ta": { "name": "1 மணி நேர மழை அளவு", "description": "கடந்த 1 மணி நேரத்தில் பதிவான உள்ளூர் மழைப்பொழிவு." }
+    }
+  },
+  "rainfall_24h_proxy": {
+    "key": "rainfall_24h_proxy",
+    "name": "24-Hour Cumulative Rainfall",
+    "category": "Meteorology & Radar",
+    "unit": "mm",
+    "description": "Total cumulative precipitation accumulated across the catchment over the previous 24-hour meteorological window.",
+    "flood_importance": "Determines catchment saturation, river stage surge, and secondary tributary swelling.",
+    "calculation_method": "24-hour rolling integration of CHIRPS / IMD gridded precipitation and real-time station gauges.",
+    "thresholds": {
+      "low": "< 30 mm",
+      "moderate": "30 - 70 mm",
+      "high": "70 - 150 mm",
+      "severe": "> 150 mm (Extreme Heavy Rain)"
+    },
+    "translations": {
+      "hi": { "name": "24 घंटे की कुल वर्षा", "description": "पिछले 24 घंटों में जलग्रहण क्षेत्र में संचित कुल वर्षा।" },
+      "bn": { "name": "২৪ ঘণ্টার সঞ্চিত বৃষ্টিপাত", "description": "বিগত ২৪ ঘণ্টায় মোট অববাহিকায় জমা হওয়া বৃষ্টিপাত।" },
+      "mr": { "name": "२४ तासांतील एकूण पाऊस", "description": "मागील २४ तासांत पडलेला एकत्रित पाऊस." },
+      "te": { "name": "24 గంటల మొత్తం వర్షపాతం", "description": "గత 24 గంటల్లో నమోదైన మొత్తం వర్షపాతం." },
+      "ta": { "name": "24 மணி நேர மொத்த மழை", "description": "கடந்த 24 மணி நேரத்தில் நிலப்பரப்பில் சேர்ந்த மொத்த மழை." }
+    }
+  },
+  "rainfall_72h_proxy": {
+    "key": "rainfall_72h_proxy",
+    "name": "72-Hour Cumulative Rainfall",
+    "category": "Meteorology & Radar",
+    "unit": "mm",
+    "description": "Three-day cumulative precipitation volume within the watershed basin.",
+    "flood_importance": "Primary driver of widespread regional riverine inundation and embankment breaches.",
+    "calculation_method": "72-hour multi-sensor spatial integration.",
+    "thresholds": {
+      "low": "< 75 mm",
+      "moderate": "75 - 150 mm",
+      "high": "150 - 250 mm",
+      "severe": "> 250 mm (Severe Regional Loading)"
+    },
+    "translations": {
+      "hi": { "name": "72 घंटे की कुल वर्षा", "description": "पिछले 3 दिनों में जलसंभर में कुल एकत्रित वर्षा।" },
+      "bn": { "name": "৭২ ঘণ্টার পুঞ্জীভূত বৃষ্টি", "description": "বিগত ৩ দিনে অববাহিকায় মোট বৃষ্টিপাতের পরিমাণ।" },
+      "mr": { "name": "७२ तासांचा एकत्रित पाऊस", "description": "गेल्या ३ दिवसांतील एकूण संचित पाऊस." },
+      "te": { "name": "72 గంటల సంచిత వర్షపాతం", "description": "గత 3 రోజులలో నమోదైన సంచిత వర్షపాతం." },
+      "ta": { "name": "72 மணி நேர ஒட்டுமொத்த மழை", "description": "கடந்த 3 நாட்களில் பதிவான மொத்த திரண்ட மழை." }
+    }
+  },
+  "mean_slope_deg": {
+    "key": "mean_slope_deg",
+    "name": "Catchment Mean Slope",
+    "category": "Terrain & Topography",
+    "unit": "°",
+    "description": "Average topographical inclination angle of the surrounding basin landform derived from Digital Elevation Models (DEM).",
+    "flood_importance": "Low slope values (< 3°) indicate flat plains and floodplains prone to prolonged waterlogging and slow drainage.",
+    "calculation_method": "Calculated via spatial gradient raster filters on Copernicus DEM 30m / HydroSHEDS elevation tiles.",
+    "thresholds": {
+      "severe_waterlogging": "< 2° (Extremely Flat Basin)",
+      "moderate": "2° - 6° (Gentle Inundation Slope)",
+      "steep_runoff": "> 10° (High Velocity Runoff)"
+    },
+    "translations": {
+      "hi": { "name": "भू-भाग की औसत ढलान", "description": "डिजिटल एलिवेशन मॉडल से प्राप्त भूमि की औसत ढलान।" },
+      "bn": { "name": "গড় ভূমির ঢাল", "description": "ডিজিটাল এলিভেশন মডেল থেকে প্রাপ্ত অববাহিকার গড় ঢালু মাত্রা।" },
+      "mr": { "name": "जमिनीचा सरासरी उतार", "description": "डिजिटल एलिव्हेशन मॉडेलवरून काढलेला जमिनीचा सरासरी उतार." },
+      "te": { "name": "భూ ఉపరితల సగటు వాలు", "description": "డిజిటల్ ఎలివేషన్ మోడల్ ద్వారా లెక్కించిన భూమి వాలు." },
+      "ta": { "name": "நிலப்பரப்பின் சராசரி சாய்வு", "description": "நிலப்பரப்பின் சாய்வு கோணம் (குறைந்த சாய்வு நீர் தேங்க வழிவகுக்கும்)." }
+    }
+  },
+  "soil_runoff_proxy": {
+    "key": "soil_runoff_proxy",
+    "name": "Soil Runoff Coefficient Proxy",
+    "category": "Soil & Surface",
+    "unit": "Index",
+    "description": "Hydrological proxy indicating the percentage of precipitation that transforms into immediate surface runoff instead of infiltrating into the ground.",
+    "flood_importance": "High clay content and saturated soils prevent percolation, causing rainwater to rush directly into river channels.",
+    "calculation_method": "Calculated from SoilGrids 250m global layers (Clay %, Sand %, Silt %, Soil Organic Carbon, and Bulk Density).",
+    "thresholds": {
+      "low": "< 60 (High Infiltration)",
+      "moderate": "60 - 90",
+      "high": "90 - 110",
+      "severe": "> 110 (Extreme Runoff / Impermeable Soil)"
+    },
+    "translations": {
+      "hi": { "name": "मृदा अपवाह गुणांक", "description": "मिट्टी की जल अवशोषण क्षमता और सतही बहाव का सूचकांक।" },
+      "bn": { "name": "মাটির জল নিষ্কাশন সূচক", "description": "মাটি কতটা জল শোষণ করতে পারে এবং কতটা দ্রুত উপরিভাগে প্রবাহিত হয় তার পরিমাপ।" },
+      "mr": { "name": "मातीचा पृष्ठभाग प्रवाह गुणांक", "description": "मातीचे पाणी शोषून घेण्याचे प्रमाण व वाहून जाणाऱ्या पाण्याचे प्रमाण." },
+      "te": { "name": "మట్టి ఉపరితల ప్రవాహ సూచిక", "description": "మట్టి నీటిని పీల్చుకోకుండా పైపైనే ప్రవహించే తీవ్రత." },
+      "ta": { "name": "மண் வழிந்தோடும் குறியீடு", "description": "மண் தண்ணீரை உறிஞ்சாமல் தரைமட்டத்தில் வெள்ளமாக ஓடும் தன்மை." }
+    }
+  },
+  "river_level": {
+    "key": "river_level",
+    "name": "Mainstem River Stage Level",
+    "category": "Hydrology",
+    "unit": "m",
+    "description": "Current surface water elevation measured relative to the local riverbed datum at the nearest upstream Central Water Commission (CWC) hydrological gauge.",
+    "flood_importance": "Direct measure of river capacity; approaching warning or danger marks triggers rapid embankment overtopping.",
+    "calculation_method": "Live telemetry from CWC / GloFAS river gauge telemetry with spatial inverse-distance weighting.",
+    "thresholds": {
+      "normal": "Below Warning Level",
+      "warning": "Within 1.0m of Danger Level",
+      "danger": "Exceeds Danger Level (Severe Flood Hazard)"
+    },
+    "translations": {
+      "hi": { "name": "नदी का जलस्तर", "description": "निकटतम हाइड्रोलॉजिकल गेज पर मापा गया नदी का वर्तमान जलस्तर।" },
+      "bn": { "name": "নদীর বর্তমান জলস্তর", "description": "নিকটস্থ গেজ স্টেশনে রেকর্ড করা নদীর জলসীমার উচ্চতা।" },
+      "mr": { "name": "नदीची पाण्याची पातळी", "description": "जवळच्या जलमापन केंद्रावरील नदीची सध्याची पाणी पातळी." },
+      "te": { "name": "నది నీటి మట్టం", "description": "సమీప గేజింగ్ స్టేషన్ వద్ద నమోదైన నది నీటి ఎత్తు." },
+      "ta": { "name": "ஆற்றின் நீர்மட்டம்", "description": "அருகிலுள்ள நீர் அளவீட்டு மையத்தில் பதிவான தற்போதைய நீர்மட்டம்." }
+    }
+  },
+  "estimated_exposed_population": {
+    "key": "estimated_exposed_population",
+    "name": "Estimated Exposed Population",
+    "category": "Vulnerability & Exposure",
+    "unit": "People",
+    "description": "Total count of residents residing within the vulnerable floodplain zone of the identified basin.",
+    "flood_importance": "Critical metric for emergency disaster management, evacuation route planning, and relief shelter deployment.",
+    "calculation_method": "Spatial intersection of high-resolution WorldPop population density rasters with modelled flood inundation extents.",
+    "thresholds": {
+      "low": "< 1,000",
+      "moderate": "1,000 - 10,000",
+      "high": "10,000 - 50,000",
+      "severe": "> 50,000"
+    },
+    "translations": {
+      "hi": { "name": "अनुमानित प्रभावित जनसंख्या", "description": "संभावित बाढ़ क्षेत्र में रहने वाले लोगों की कुल अनुमानित संख्या।" },
+      "bn": { "name": "ঝুঁকিপূর্ণ জনসংখ্যা", "description": "বন্যাপ্রবণ এলাকার মধ্যে বসবাসকারী আনুমানিক মোট জনসংখ্যা।" },
+      "mr": { "name": "अंदाजित बाधित लोकसंख्या", "description": "पूरप्रवण क्षेत्रातील बाधित होणारी अंदाजित लोकसंख्या." },
+      "te": { "name": "ప్రమాదంలో ఉన్న జనాభా", "description": "వరద ముప్పు ప్రాంతంలో నివసిస్తున్న ప్రజల సంఖ్య." },
+      "ta": { "name": "பாதிக்கப்படக்கூடிய மக்கள் தொகை", "description": "வெள்ள அபாய மண்டலத்தில் உள்ள மக்கள் எண்ணிக்கை." }
+    }
+  },
+  "critical_infrastructure_exposed": {
+    "key": "critical_infrastructure_exposed",
+    "name": "Critical Infrastructure at Risk",
+    "category": "Vulnerability & Exposure",
+    "unit": "Units / km",
+    "description": "Count of hospitals, schools, bridges, roads, and railway tracks located inside the flood inundation hazard polygon.",
+    "flood_importance": "Ensures uninterrupted emergency medical response, power grid protection, and safe logistics during evacuations.",
+    "calculation_method": "OpenStreetMap & Bharat Maps vector point-in-polygon overlay with hydrodynamic flood extents.",
+    "thresholds": {
+      "low": "0 - 2 Facilities",
+      "moderate": "3 - 10 Facilities",
+      "high": "11 - 25 Facilities",
+      "severe": "> 25 Facilities / Lifeline Roads Inundated"
+    },
+    "translations": {
+      "hi": { "name": "जोखिम में महत्वपूर्ण बुनियादी ढांचा", "description": "बाढ़ क्षेत्र में स्थित अस्पताल, स्कूल, पुल, सड़कें और रेल मार्ग।" },
+      "bn": { "name": "ঝুঁকিপূর্ণ জরুরি পরিকাঠামো", "description": "বন্যার কবলে পড়তে পারে এমন হাসপাতাল, স্কুল, সেতু ও সড়ক।" },
+      "mr": { "name": "धोक्यात असलेल्या महत्त्वाच्या पायाभूत सुविधा", "description": "पूरक्षेत्रातील रुग्णालये, शाळा, पूल, रस्ते आणि रेल्वे." },
+      "te": { "name": "ప్రమాదంలో ఉన్న కీలక మౌలిక సదుపాయాలు", "description": "వరద ముప్పు ఉన్న ఆసుపత్రులు, పాఠశాలలు, వంతెనలు మరియు రహదారులు." },
+      "ta": { "name": "அபாயத்திலுள்ள முக்கிய உள்கட்டமைப்புகள்", "description": "வெள்ள நீரில் மூழ்க வாய்ப்புள்ள மருத்துவமனைகள், பள்ளிகள், பாலங்கள் மற்றும் சாலைகள்." }
+    }
+  }
+}
