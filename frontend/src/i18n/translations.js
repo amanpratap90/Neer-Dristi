@@ -144,7 +144,7 @@ export const translations = {
     ]
   },
   hi: {
-    appTitle: "चेतक एआई बाढ़ खुफिया प्रणाली",
+    appTitle: "Neer Drishti बाढ़ खुफिया प्रणाली",
     appSubtitle: "राष्ट्रीय भू-स्थानिक मशीन लर्निंग एवं वास्तविक समय आपदा जोखिम मंच",
     liveSystem: "सेंसर और राडार सक्रिय",
     searchPlaceholder: "शहर, जिला, नदी घाटी खोजें या अक्षांश, देशांतर दर्ज करें...",
@@ -157,7 +157,7 @@ export const translations = {
     telemetryTitle: "भौतिक एवं भू-स्थानिक टेलीमेट्री",
     aiBriefingTitle: "एआई आपदा खुफिया रिपोर्ट",
     actionPlanTitle: "रणनीतिक आपातकालीन कार्य निर्देश",
-    aiCopilotTitle: "चेतक एआई बाढ़ सहायक (Copilot)",
+    aiCopilotTitle: "Neer Drishti बाढ़ सहायक (Copilot)",
     askCopilot: "इस बेसिन के बाढ़ जोखिम के बारे में कुछ भी पूछें...",
     send: "पूछें",
     verifiedSensor: "सेंसर द्वारा सत्यापित",
@@ -215,7 +215,7 @@ export const translations = {
     ]
   },
   bn: {
-    appTitle: "চেতক এআই বন্যা গোয়েন্দা ব্যবস্থা",
+    appTitle: "Neer Drishti বন্যা গোয়েন্দা ব্যবস্থা",
     appSubtitle: "জাতীয় ভূ-স্থানিক মেশিন লার্নিং ও রিয়েল-টাইম দুর্যোগ ঝুঁকি প্ল্যাটফর্ম",
     liveSystem: "সেন্টিনেল ও রাডার সক্রিয়",
     searchPlaceholder: "শহর, জেলা, নদী অববাহিকা খুঁজুন বা অক্ষাংশ, দ্রাঘিমাংশ দিন...",
@@ -228,7 +228,7 @@ export const translations = {
     telemetryTitle: "ভৌত ও ভূ-স্থানিক টেলিমেট্রি",
     aiBriefingTitle: "এআই দুর্যোগ গোয়েন্দা প্রতিবেদন",
     actionPlanTitle: "জরুরি পদক্ষেপ নির্দেশিকা",
-    aiCopilotTitle: "চেতক এআই বন্যা সহায়ক",
+    aiCopilotTitle: "Neer Drishti বন্যা সহায়ক",
     askCopilot: "এই অববাহিকার বন্যা ঝুঁকি সম্পর্কে যেকোনো প্রশ্ন করুন...",
     send: "পাঠান",
     verifiedSensor: "সেন্সর দ্বারা যাচাইকৃত",
@@ -284,7 +284,7 @@ export const translations = {
     ]
   },
   mr: {
-    appTitle: "चेतक एआय पूर गुप्तवार्ता प्रणाली",
+    appTitle: "Neer Drishti पूर गुप्तवार्ता प्रणाली",
     appSubtitle: "राष्ट्रीय भू-स्थानिक मशीन लर्निंग व आपत्ती जोखीम नियंत्रण मंच",
     liveSystem: "सेंसर व रडार सक्रिय",
     searchPlaceholder: "शहर, जिल्हा, नदीचे खोरे शोधा किंवा अक्षांश, रेखांश टाका...",
@@ -297,7 +297,7 @@ export const translations = {
     telemetryTitle: "भौतिक व भू-स्थानिक टेलीमेट्री",
     aiBriefingTitle: "एआय आपत्ती सविस्तर अहवाल",
     actionPlanTitle: "आपत्कालीन कृती निर्देश",
-    aiCopilotTitle: "चेतक एआय पूर सहाय्यक",
+    aiCopilotTitle: "Neer Drishti पूर सहाय्यक",
     askCopilot: "या भागातील पुराविषयी काहीही विचारा...",
     send: "विचारा",
     verifiedSensor: "सेंसर द्वारे प्रमाणित",
@@ -353,7 +353,7 @@ export const translations = {
     ]
   },
   te: {
-    appTitle: "చేతక్ AI వరద విశ్లేషణ వేదిక",
+    appTitle: "Neer Drishti వరద విశ్లేషణ వేదిక",
     appSubtitle: "జాతీయ జియోస్పేషియల్ మెషిన్ లెర్నింగ్ మరియు రియల్-టైమ్ విపత్తు నిర్వహణ వ్యవస్థ",
     liveSystem: "శాటిలైట్ & రాడార్ యాక్టివ్",
     searchPlaceholder: "నగరం, జిల్లా, నదీ పరీవాహక ప్రాంతాన్ని శోధించండి...",
@@ -366,7 +366,7 @@ export const translations = {
     telemetryTitle: "భౌతిక మరియు శాటిలైట్ టెలిమెట్రీ",
     aiBriefingTitle: "ఏఐ విపత్తు నివేదిక",
     actionPlanTitle: "అత్యవసర రక్షణ చర్యలు",
-    aiCopilotTitle: "చేతక్ AI వరద సహాయకుడు",
+    aiCopilotTitle: "Neer Drishti వరద సహాయకుడు",
     askCopilot: "ఈ ప్రాంత వరద ముప్పు గురించి ఏదైనా అడగండి...",
     send: "పంపు",
     verifiedSensor: "సెన్సార్ ధృవీకరించినది",
@@ -422,7 +422,7 @@ export const translations = {
     ]
   },
   ta: {
-    appTitle: "சேதக் AI வெள்ள முன்னறிவிப்பு தளம்",
+    appTitle: "Neer Drishti வெள்ள முன்னறிவிப்பு தளம்",
     appSubtitle: "தேசிய புவிசார் இயந்திர கற்றல் மற்றும் நேரடி பேரிடர் மேலாண்மை கட்டமைப்பு",
     liveSystem: "செயற்கைக்கோள் மற்றும் ரேடார் நேரலை",
     searchPlaceholder: "நகரம், மாவட்டம், ஆற்றுப்படுகை அல்லது ஆயத்தொலைவுகளை உள்ளிடவும்...",
@@ -435,7 +435,7 @@ export const translations = {
     telemetryTitle: "இயற்பியல் & செயற்கைக்கோள் தரவுகள்",
     aiBriefingTitle: "ஏஐ பேரிடர் உளவு அறிக்கை",
     actionPlanTitle: "அவசர பாதுகாப்பு வழிகாட்டுதல்கள்",
-    aiCopilotTitle: "சேதக் AI வெள்ள வழிகாட்டி",
+    aiCopilotTitle: "Neer Drishti வெள்ள வழிகாட்டி",
     askCopilot: "இந்த பகுதியின் வெள்ள அபாயம் பற்றி எதையும் கேளுங்கள்...",
     send: "அனுப்பு",
     verifiedSensor: "உறுதிசெய்யப்பட்ட சென்சார் தரவு",
