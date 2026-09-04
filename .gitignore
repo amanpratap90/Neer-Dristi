@@ -1,6 +1,11 @@
 # Dependencies
 node_modules/
 
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
 # Build output
 dist/
 

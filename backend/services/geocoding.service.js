@@ -1,12 +1,19 @@
 const NOMINATIM_URL = "https://nominatim.openstreetmap.org";
 
 const headers = {
-  "User-Agent": "ChetakAI-Flood-Intelligence/1.0"
+  "User-Agent": "ChetakAI-Flood-Intelligence/1.0 (contact: admin@chetakai.ai)"
 };
 
-async function request(url) {
+const geocodeCache = new Map();
+
+async function request(url, timeoutMs = 4000) {
+  const cacheKey = url.toString();
+  if (geocodeCache.has(cacheKey)) {
+    return geocodeCache.get(cacheKey);
+  }
+
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 8000);
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
     const response = await fetch(url, {
@@ -18,7 +25,9 @@ async function request(url) {
       throw new Error(`Geocoding service returned ${response.status}`);
     }
 
-    return await response.json();
+    const data = await response.json();
+    geocodeCache.set(cacheKey, data);
+    return data;
   } finally {
     clearTimeout(timer);
   }

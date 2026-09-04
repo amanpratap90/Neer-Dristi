@@ -1,8 +1,53 @@
-CHETAKAI V1 — COMPLETE END-TO-END TECHNICAL DOCUMENTATION
+CHETAKAI V2 — PYTHON FASTAPI BACKEND & CWC GROUND TRUTH INTEGRATION
 ==============================================================================
-Version: V1
+Version: V2.0.0
 Date: September 2026
+Backend: Python 3.13 + FastAPI + Uvicorn + Pydantic V2
+Frontend: React 19 + Vite + TailwindCSS (Preserved Unchanged)
+Hydrological Ground Truth: Central Water Commission (CWC) / NWIC / India-WRIS via HydroSwift
 
+QUICKSTART: RUNNING THE APPLICATION
+-----------------------------------
+1. Python FastAPI Backend:
+   cd backend
+   pip install -r requirements.txt
+   python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+   API Documentation (Swagger UI): http://localhost:8000/docs
+
+2. React Frontend:
+   cd frontend
+   npm run dev
+   Access dashboard: http://localhost:5173
+
+3. Run Automated Python Test Suite:
+   cd backend
+   python test_fastapi_backend.py
+
+CANONICAL API SPECIFICATIONS
+----------------------------
+1. Canonical Flood Monitoring API:
+   GET /api/flood-monitoring?lat=25.323611&lon=83.037500
+   Returns independent normalized signals:
+   - location: { latitude, longitude, name, basin }
+   - ai: { source: "AI_MODEL", probability, risk, model_name }
+   - weather: { source: "WEATHER_API", rainfall_mm, forecast_rainfall_mm, risk }
+   - cwc: { source: "CWC", status, station, observation, thresholds, condition, reason, data_source }
+   - overall: { status, confidence, basis, explanation }
+
+2. Independent CWC Telemetry API:
+   GET /api/cwc/status?lat=25.323611&lon=83.037500
+   Returns nearest surveyed gauge, Haversine distance, water level, warning, danger, and HFL marks.
+
+3. Frontend Intelligence Endpoints:
+   POST /api/v1/intelligence/analyze  (Full multi-signal analysis payload)
+   GET  /api/v1/location/search?q=... (Geocoding search)
+   POST /api/v1/intelligence/chat     (Multilingual disaster copilot)
+   GET  /api/v1/intelligence/glossary (Metric glossary and explainers)
+
+==============================================================================
+CHETAKAI V1/V2 — COMPLETE END-TO-END TECHNICAL DOCUMENTATION
+==============================================================================
 Purpose
 -------
 This document explains ChetakAI from data collection through preprocessing, feature engineering, machine learning, spatial resolution, risk scoring, alerting, RAG, Weather LLM, orchestration, API integration and dashboard presentation.

@@ -17,7 +17,7 @@ async function request(path, options = {}) {
       data?.detail?.message ||
       data?.detail ||
       data?.message ||
-      "ChetakAI backend request failed."
+      "Neer Drishti backend request failed."
     );
   }
 

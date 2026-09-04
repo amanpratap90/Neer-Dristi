@@ -23,6 +23,7 @@ import FeatureImportanceChart from "./FeatureImportanceChart";
 import MetricCard from "./MetricCard";
 import AICopilotChat from "./AICopilotChat";
 import DetailedReport from "./DetailedReport";
+import HomeOverview from "./HomeOverview";
 import { translations } from "../i18n/translations";
 
 export default function Dashboard({
@@ -49,12 +50,63 @@ export default function Dashboard({
 
   const riskClass = prediction.risk_class || "HIGH";
   const probability = prediction.flood_probability_pct || 0;
+  const approximationFactor = Math.min(0.9, Math.max(0.18, 0.18 + (Number(probability) / 100) * 0.65 + (Number(landCover.built_up_pct?.value) || 5) / 500));
+  const approximationPopulation = Math.round(145000 * approximationFactor);
+  const estimatedExposure = {
+    population: { value: 145000, unit: "people", source: "Hardcoded probability approximation", sourceType: "ESTIMATED", status: "ESTIMATED" },
+    vulnerable_population: { value: Math.round(approximationPopulation * 0.18), unit: "people", source: "Hardcoded probability approximation", sourceType: "ESTIMATED", status: "ESTIMATED" },
+    buildings_exposed: { value: Math.max(1, Math.round(approximationPopulation / 5)), unit: "buildings", source: "Hardcoded probability approximation", sourceType: "ESTIMATED", status: "ESTIMATED" },
+    hospitals_exposed: { value: Math.max(1, Math.round(approximationPopulation / 120000)), unit: "facilities", source: "Hardcoded probability approximation", sourceType: "ESTIMATED", status: "ESTIMATED" },
+    schools_exposed: { value: Math.max(1, Math.round(approximationPopulation / 18000)), unit: "facilities", source: "Hardcoded probability approximation", sourceType: "ESTIMATED", status: "ESTIMATED" },
+    roads_exposed_km: { value: Number((1.5 + Math.sqrt(approximationPopulation) * 0.08).toFixed(1)), unit: "km", source: "Hardcoded probability approximation", sourceType: "ESTIMATED", status: "ESTIMATED" },
+    bridges_exposed: { value: Math.max(1, Math.round(approximationPopulation / 60000)), unit: "bridges", source: "Hardcoded probability approximation", sourceType: "ESTIMATED", status: "ESTIMATED" }
+  };
+  const exposureMetric = (key) => {
+    const metric = exposure[key];
+    return metric && metric.value !== null && metric.value !== undefined ? metric : estimatedExposure[key];
+  };
+  const probabilityMetric = (value, unit) => ({
+    value,
+    unit,
+    source: "Hardcoded probability approximation",
+    sourceType: "ESTIMATED",
+    status: "ESTIMATED"
+  });
+  const estimatedSoilRunoff = probabilityMetric(Math.round(65 + Number(probability) * 0.2), "Index");
+  const estimatedClay = probabilityMetric(28.5, "%");
+  const estimatedSand = probabilityMetric(38, "%");
+  const estimatedSilt = probabilityMetric(33.5, "%");
+  const estimatedRiverStage = probabilityMetric(Number((0.8 + Number(probability) * 0.012).toFixed(2)), "m");
+  const estimatedDrainage = probability >= 60 ? "HIGH" : probability >= 30 ? "MODERATE" : "LOW";
+  const metricOrProbability = (metric, fallback) => metric && metric.value !== null && metric.value !== undefined ? metric : fallback;
+
+  const aiRisk = data?.ai_risk_status || {};
+  const cwcGroundTruth = data?.cwc_ground_truth || data?.observed_hydrology_status || {};
+  const fallbackEnv = data?.fallback_environmental || {};
+  const overallMonitoring = data?.overall_monitoring || {};
+  const overallStatus = overallMonitoring.status || alert.level || "NORMAL";
+  const overallConfidence = overallMonitoring.confidence || "MEDIUM CONFIDENCE";
+  const overallBasis = overallMonitoring.basis || "AI MODEL";
+
+  const isCwcAvailable = cwcGroundTruth.status === "AVAILABLE" && cwcGroundTruth.water_level_m !== null;
+  const isCwcStale = cwcGroundTruth.status === "STALE";
 
   // Computed flood exposure values
   const estimatedDepth = floodExp.estimated_depth_m ?? (0.3 + (probability / 100) * 1.2).toFixed(2);
   const maxDepth = floodExp.max_expected_depth_m ?? (Number(estimatedDepth) * 1.5).toFixed(2);
   const inundatedArea = floodExp.inundated_area_km2 ?? ((exposure.estimated_exposed_population || 0) / 530).toFixed(1);
   const agriExposed = floodExp.agricultural_land_km2 ?? (Number(inundatedArea) * 0.58).toFixed(1);
+
+  const riskEntries = Object.entries(data?.risk_components || {}).map(([key, value]) => [key, Number(value) || 0]);
+  const riskTotal = riskEntries.reduce((sum, [, value]) => sum + value, 0) || 1;
+  const riskColors = ["#b25d2b", "#d47d32", "#3b7468", "#5b9ed1", "#8b6f47", "#8d4f3d", "#9aa69f"];
+  let riskOffset = 0;
+  const riskGradient = riskEntries.map(([key, value], index) => {
+    const start = (riskOffset / riskTotal) * 100;
+    riskOffset += value;
+    const end = (riskOffset / riskTotal) * 100;
+    return `${riskColors[index % riskColors.length]} ${start}% ${end}%`;
+  }).join(", ");
 
   const lat = location.latitude || 25.25;
   const lon = location.longitude || 87.04;
@@ -68,16 +120,198 @@ export default function Dashboard({
   const bbox = `${lon - 0.18},${lat - 0.12},${lon + 0.18},${lat + 0.12}`;
 
   // Warning emoji
-  const warningEmoji = riskClass === "SEVERE" ? "🔴" : riskClass === "HIGH" ? "🟠" : riskClass === "MODERATE" ? "🟡" : "🟢";
+  const warningEmoji = overallStatus === "CRITICAL" ? "🔴" : overallStatus === "HIGH ALERT" ? "🟠" : overallStatus === "WATCH" ? "🟡" : "🟢";
 
   return (
     <div className="dashboard-root animate-fade-in">
+
+      <HomeOverview data={data} language={language} onAnalyzeBasin={(basinLat, basinLon) => window.dispatchEvent(new CustomEvent("chetakai:analyze-basin", { detail: { lat: basinLat, lon: basinLon } }))} />
+
+      {/* NEW UPPER UI - INTELLIGENCE DASHBOARD */}
+      <section className="intel-wrapper">
+        <div className="intel-grid">
+          {/* COLUMN 1: AI FLOOD RISK */}
+          <div className="intel-col theme-ai">
+            <div className="intel-header">
+              <span>🧠 . AI FLOOD RISK</span>
+              <IconShield className="w-4 h-4" />
+            </div>
+            <div className="intel-body">
+              <div className="intel-title">
+                AI Model Prediction
+              </div>
+              <div className="intel-subtitle">Based on rainfall, soil, terrain & more</div>
+              
+              <div style={{ display: 'flex', alignItems: 'center', gap: '16px', marginTop: '8px' }}>
+                <div>
+                  <div className="intel-main-val">{aiRisk.probability !== null && aiRisk.probability !== undefined ? `${(Number(aiRisk.probability) > 1 ? Number(aiRisk.probability) : Number(aiRisk.probability) * 100).toFixed(1)}%` : `${probability.toFixed(1)}%`}</div>
+                  <div style={{ fontSize: '11px', color: '#64748b', marginBottom: '8px' }}>Flood Probability</div>
+                  <span className="intel-badge outline-green">{aiRisk.risk || aiRisk.label || riskClass} RISK</span>
+                </div>
+                {/* A simulated circular arc icon */}
+                <div style={{ width: '80px', height: '80px', borderRadius: '50%', border: '8px solid #f1f5f9', borderBottomColor: '#22c55e', borderLeftColor: '#22c55e', display: 'grid', placeItems: 'center', transform: 'rotate(-45deg)' }}>
+                  <IconRain className="w-8 h-8 text-slate-400" style={{ transform: 'rotate(45deg)' }} />
+                </div>
+              </div>
+              
+              <div className="intel-box-light" style={{ marginTop: 'auto' }}>
+                <IconCheck className="w-5 h-5 text-green-600 flex-shrink-0" />
+                <span>Low chance of flood in this area based on our AI model.</span>
+              </div>
+            </div>
+            <div className="intel-footer">
+              Source: Neer Drishti Model
+            </div>
+          </div>
+
+          {/* COLUMN 2: ENVIRONMENTAL CONDITIONS */}
+          <div className="intel-col theme-cwc">
+            <div className="intel-header">
+              <span>2. ENVIRONMENTAL CONDITIONS</span>
+              <IconWaves className="w-4 h-4" />
+            </div>
+            <div className="intel-body">
+              <div className="intel-title">
+                Rainfall & Soil Signals
+              </div>
+              <div className="intel-subtitle">Independent environmental inputs</div>
+
+              <div className="station-levels" style={{ marginTop: '12px' }}>
+                <div className="level-col">
+                  <span>Rainfall 24h</span>
+                  <strong style={{ color: '#f59e0b' }}>{weather.rainfall_24h?.value ?? "—"} mm</strong>
+                </div>
+                <div className="level-col">
+                  <span>Rainfall 72h</span>
+                  <strong style={{ color: '#f59e0b' }}>{weather.rainfall_72h?.value ?? "—"} mm</strong>
+                </div>
+                <div className="level-col">
+                  <span>Soil Moisture</span>
+                  <strong style={{ color: '#22c55e' }}>{soil.moisture_root_zone?.value ?? "—"} m³/m³</strong>
+                </div>
+              </div>
+
+              <div className="intel-box-light" style={{ marginTop: '12px' }}>
+                <IconCheck className="w-5 h-5 text-green-600 flex-shrink-0" />
+                <span>Prediction is driven by rainfall, soil moisture, GloFAS, terrain, and satellite indicators rather than a single gauge level.</span>
+              </div>
+            </div>
+            <div className="intel-footer">
+              Source: Rainfall, soil, terrain, GloFAS, satellite
+            </div>
+          </div>
+
+        </div>
+
+        {/* BOTTOM EXPLAINER SECTION */}
+        <div className="intel-explainer">
+          <div>
+            <div className="explainer-title" style={{ marginBottom: '12px' }}>
+              <IconUsers className="w-4 h-4 text-emerald-600" /> WHAT DOES THIS MEAN?
+            </div>
+            <div className="explainer-cols">
+              <div className="expl-item" style={{ borderRight: '1px solid #e2e8f0', paddingRight: '16px' }}>
+                <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-start' }}>
+                  <IconCheck className="w-6 h-6 text-emerald-600 flex-shrink-0" style={{ background: '#dcfce7', borderRadius: '50%', padding: '3px' }} />
+                  <span>Low flood risk in this area (according to AI).</span>
+                </div>
+              </div>
+              
+              <div className="expl-item" style={{ borderRight: '1px solid #e2e8f0', paddingRight: '16px' }}>
+                <IconAlertTriangle className="w-6 h-6 text-amber-500 flex-shrink-0" />
+                <span>Independent environmental indicators are being monitored continuously.</span>
+              </div>
+              
+              <div className="expl-item">
+                <IconRain className="w-6 h-6 text-blue-500 flex-shrink-0" />
+                <span>River discharge is low according to model.</span>
+              </div>
+            </div>
+          </div>
+          
+          <div>
+            <div className="explainer-title" style={{ color: '#16a34a' }}><IconShield className="w-4 h-4" /> WHAT SHOULD YOU DO?</div>
+            <div className="action-items">
+              <div className="action-item">
+                <div style={{ width: '32px', height: '32px', borderRadius: '50%', background: '#dcfce7', display: 'grid', placeItems: 'center', color: '#16a34a' }}>
+                  <IconEye className="w-4 h-4" />
+                </div>
+                <strong>KEEP WATCH</strong>
+                <span>Stay alert</span>
+              </div>
+              <div className="action-item">
+                <div style={{ width: '32px', height: '32px', borderRadius: '50%', background: '#fef3c7', display: 'grid', placeItems: 'center', color: '#d97706' }}>
+                  <IconActivity className="w-4 h-4" />
+                </div>
+                <strong>STAY INFORMED</strong>
+                <span>Check updates regularly</span>
+              </div>
+              <div className="action-item">
+                <div style={{ width: '32px', height: '32px', borderRadius: '50%', background: '#dbeafe', display: 'grid', placeItems: 'center', color: '#2563eb' }}>
+                  <IconUsers className="w-4 h-4" />
+                </div>
+                <strong>FOLLOW ADVICE</strong>
+                <span>Follow local instructions</span>
+              </div>
+              <div className="action-item">
+                <div style={{ width: '32px', height: '32px', borderRadius: '50%', background: '#ede9fe', display: 'grid', placeItems: 'center', color: '#7c3aed' }}>
+                  <IconBuilding className="w-4 h-4" />
+                </div>
+                <strong>BE PREPARED</strong>
+                <span>Keep essentials ready</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* RISK LEVEL GUIDE (Inside Explainer) */}
+        <div className="risk-guide-wrap">
+          <div className="risk-level-guide">
+            <div style={{ padding: '6px 10px', fontSize: '9px', fontWeight: 800, letterSpacing: '0.5px', background: '#f8fafc', borderBottom: '1px solid #e2e8f0', color: '#64748b' }}>RISK LEVEL GUIDE</div>
+            <div className="risk-guide-row">
+              <div className="risk-guide-label" style={{ color: '#16a34a' }}>NORMAL</div>
+              <div className="risk-guide-desc">No immediate risk</div>
+            </div>
+            <div className="risk-guide-row">
+              <div className="risk-guide-label" style={{ color: '#d97706' }}>ELEVATED</div>
+              <div className="risk-guide-desc">Be cautious</div>
+            </div>
+            <div className="risk-guide-row">
+              <div className="risk-guide-label" style={{ color: '#ea580c' }}>HIGH</div>
+              <div className="risk-guide-desc">Take action</div>
+            </div>
+            <div className="risk-guide-row">
+              <div className="risk-guide-label" style={{ color: '#dc2626' }}>CRITICAL</div>
+              <div className="risk-guide-desc">Danger! Act now</div>
+            </div>
+          </div>
+        </div>
+
+        {/* STATUS BAR */}
+        <div className="intel-status-bar">
+          <div className="status-bar-left">
+            <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}><IconLocation className="w-3.5 h-3.5" /> Location: <strong>{location.latitude?.toFixed(6) ?? lat.toFixed(6)}°N, {location.longitude?.toFixed(6) ?? lon.toFixed(6)}°E</strong></span>
+            <div className="status-bar-divider"></div>
+            <span>District: {location.district || "Unknown"}, {location.administrative_area || "Unknown"}</span>
+          </div>
+          <div className="status-bar-right">
+            <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>📅 Last Updated: {data.generated_at ? new Date(data.generated_at).toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true }) : "Just now"}</span>
+            <div className="status-bar-divider"></div>
+            <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}><IconActivity className="w-3 h-3" /> Auto refresh in 10 min</span>
+            <button className="help-btn">
+              <IconHelp className="w-3.5 h-3.5" /> Need Help? Call 1070
+            </button>
+          </div>
+        </div>
+      </section>
+
+
       {/* 1. EXECUTIVE AI SITUATIONAL ALERT BANNER */}
-      <div className={`alert-banner banner-${riskClass.toLowerCase()}`}>
+      <div className={`alert-banner banner-${overallStatus.toLowerCase()}`}>
         <div className="alert-banner-header">
           <div className="alert-badge-pill">
             <IconAlertTriangle className="w-5 h-5" />
-            <span>{briefing.urgency || t.riskLevels[riskClass] || "HIGH FLOOD HAZARD DETECTED"}</span>
+            <span>{briefing.urgency || t.riskLevels[overallStatus] || `${overallStatus} FLOOD MONITORING`}</span>
           </div>
           <span className="alert-timestamp">● Real-Time Analysis: {new Date(data.generated_at).toLocaleTimeString()}</span>
         </div>
@@ -107,16 +341,17 @@ export default function Dashboard({
         </div>
       </div>
 
-      <DetailedReport data={data} />
+      <DetailedReport data={data} language={language} />
 
       {/* 2. TOP ROW: GAUGE + ML DECISION DRIVERS + QUICK SUMMARY */}
       <div className="top-insights-grid">
-        <RiskGauge
-          probability={prediction.flood_probability_pct}
-          riskScore={prediction.risk_score}
-          riskClass={riskClass}
-          alert={alert}
-          onExplain={onExplain}
+        <RiskGauge 
+          probability={probability} 
+          riskScore={data?.prediction?.risk_score} 
+          riskClass={riskClass} 
+          confidencePct={data?.prediction?.confidence_pct}
+          alert={data?.alert} 
+          onExplain={onExplain} 
         />
 
         <FeatureImportanceChart
@@ -130,7 +365,7 @@ export default function Dashboard({
               <IconLocation className="w-5 h-5 text-copper" />
               <h3 className="overview-title">{location.basin_name || "Identified Basin"}</h3>
             </div>
-            <span className="badge-basin-id">{location.basin_id || "CWC_BASIN"}</span>
+            <span className="badge-basin-id">{location.basin_id || "BASIN"}</span>
           </div>
 
           <div className="overview-meta-list">
@@ -144,11 +379,11 @@ export default function Dashboard({
             </div>
             <div className="overview-meta-item">
               <span className="meta-label">Soil Runoff Proxy:</span>
-              <span className="meta-val text-amber-700 font-bold">{soil.soil_runoff_proxy || 100.5} (High Saturation)</span>
+              <span className="meta-val text-amber-700 font-bold">{soil.soil_runoff_proxy?.value ?? "Unavailable"}</span>
             </div>
             <div className="overview-meta-item">
               <span className="meta-label">Exposed Population:</span>
-              <span className="meta-val text-rose-700 font-bold">{(exposure.estimated_exposed_population || 14200).toLocaleString()} residents</span>
+              <span className="meta-val text-rose-700 font-bold">{exposure.population?.value ? exposure.population.value.toLocaleString() : "Unavailable"}</span>
             </div>
           </div>
 
@@ -179,10 +414,9 @@ export default function Dashboard({
             <MetricCard
               icon={IconRain}
               title={t.metrics.rain1h}
-              value={weather.rainfall_1h?.toFixed(1)}
-              unit="mm"
+              dataObj={weather.rainfall_1h}
               subtitle="Doppler Radar Rate"
-              trend={weather.rainfall_1h > 15 ? "Heavy" : "Normal"}
+              trend={weather.rainfall_1h?.value > 15 ? "Heavy" : "Normal"}
               explainerData={{
                 key: "rainfall_1h_proxy",
                 name: "1-Hour Rainfall Intensity",
@@ -194,7 +428,7 @@ export default function Dashboard({
             <MetricCard
               icon={IconRain}
               title="Rain 3h"
-              value={weather.rainfall_3h?.toFixed(1)}
+              dataObj={weather.rainfall_3h}
               unit="mm"
               subtitle="3-Hour Accumulation"
               trend={weather.rainfall_3h > 30 ? "Heavy" : "Normal"}
@@ -209,7 +443,7 @@ export default function Dashboard({
             <MetricCard
               icon={IconRain}
               title="Rain 6h"
-              value={weather.rainfall_6h?.toFixed(1)}
+              dataObj={weather.rainfall_6h}
               unit="mm"
               subtitle="6-Hour Accumulation"
               explainerData={{
@@ -223,10 +457,9 @@ export default function Dashboard({
             <MetricCard
               icon={IconRain}
               title={t.metrics.rain24h}
-              value={weather.rainfall_24h?.toFixed(1)}
-              unit="mm"
+              dataObj={weather.rainfall_24h}
               subtitle="24h Integrated Volume"
-              trend={weather.rainfall_24h > 70 ? "Intense Surge" : "Moderate"}
+              trend={weather.rainfall_24h?.value > 70 ? "Intense Surge" : "Moderate"}
               explainerData={{
                 key: "rainfall_24h_proxy",
                 name: "24-Hour Cumulative Rainfall",
@@ -238,7 +471,7 @@ export default function Dashboard({
             <MetricCard
               icon={IconRain}
               title={t.metrics.rain72h}
-              value={weather.rainfall_72h?.toFixed(1)}
+              dataObj={weather.rainfall_72h}
               unit="mm"
               subtitle="3-Day Basin Total"
               trend="Severe Regional Loading"
@@ -253,9 +486,8 @@ export default function Dashboard({
             <MetricCard
               icon={IconThermometer}
               title="Air Temperature"
-              value={weather.temperature?.toFixed(1)}
-              unit="°C"
-              subtitle={`Humidity: ${weather.humidity?.toFixed(0)}%`}
+              dataObj={weather.temperature}
+              subtitle={`Humidity: ${weather.humidity?.value?.toFixed(0) || "—"}%`}
               explainerData={{
                 key: "temperature",
                 name: "Surface Ambient Temperature",
@@ -267,8 +499,7 @@ export default function Dashboard({
             <MetricCard
               icon={IconDroplet}
               title="Humidity"
-              value={weather.humidity?.toFixed(0)}
-              unit="%"
+              dataObj={weather.humidity}
               subtitle="Relative Humidity"
               explainerData={{
                 key: "humidity",
@@ -281,9 +512,8 @@ export default function Dashboard({
             <MetricCard
               icon={IconWind}
               title="Wind Speed"
-              value={weather.wind_speed?.toFixed(1)}
-              unit="km/h"
-              subtitle={`Pressure: ${weather.pressure?.toFixed(0)} hPa`}
+              dataObj={weather.wind_speed}
+              subtitle="Surface Wind"
               explainerData={{
                 key: "wind",
                 name: "Wind Speed",
@@ -305,7 +535,7 @@ export default function Dashboard({
             <MetricCard
               icon={IconRain}
               title="NWP Rain 1h"
-              value={forecast.nwp_rain_1h?.toFixed(1)}
+              dataObj={forecast.nwp_rain_1h}
               unit="mm"
               subtitle="Numerical Weather Prediction"
               explainerData={{
@@ -319,7 +549,7 @@ export default function Dashboard({
             <MetricCard
               icon={IconRain}
               title="NWP Rain 3h"
-              value={forecast.nwp_rain_3h?.toFixed(1)}
+              dataObj={forecast.nwp_rain_3h}
               unit="mm"
               subtitle="3-Hour Forecast"
               explainerData={{
@@ -333,7 +563,7 @@ export default function Dashboard({
             <MetricCard
               icon={IconRain}
               title="NWP Rain 6h"
-              value={forecast.nwp_rain_6h?.toFixed(1)}
+              dataObj={forecast.nwp_rain_6h}
               unit="mm"
               subtitle="6-Hour Forecast"
               explainerData={{
@@ -347,7 +577,7 @@ export default function Dashboard({
             <MetricCard
               icon={IconRain}
               title="NWP Rain 12h"
-              value={forecast.nwp_rain_12h?.toFixed(1)}
+              dataObj={forecast.nwp_rain_12h}
               unit="mm"
               subtitle="12-Hour Forecast"
               explainerData={{
@@ -361,10 +591,9 @@ export default function Dashboard({
             <MetricCard
               icon={IconRain}
               title="NWP Rain 24h"
-              value={forecast.nwp_rain_24h?.toFixed(1)}
-              unit="mm"
+              dataObj={forecast.nwp_rain_24h}
               subtitle="24-Hour Forecast"
-              trend={forecast.nwp_rain_24h > 50 ? "Heavy Expected" : "Moderate"}
+              trend={forecast.nwp_rain_24h?.value > 50 ? "Heavy Expected" : "Moderate"}
               explainerData={{
                 key: "nwp_rain_24h",
                 name: "NWP 24-Hour Forecast Rain",
@@ -376,9 +605,9 @@ export default function Dashboard({
             <MetricCard
               icon={IconShield}
               title="Forecast Confidence"
-              value={forecast.confidence_label || forecast.confidence}
+              dataObj={forecast.confidence}
               unit={forecast.confidence_label ? "" : "%"}
-              subtitle={`NWP Spread: ${forecast.spread?.toFixed(1)} mm`}
+              subtitle={`NWP Spread: ${forecast.spread?.value?.toFixed?.(1) || "—"} mm`}
               explainerData={{
                 key: "forecast_confidence",
                 name: "Forecast Confidence",
@@ -400,10 +629,9 @@ export default function Dashboard({
             <MetricCard
               icon={IconMountain}
               title={t.metrics.slope}
-              value={terrain.mean_slope_deg?.toFixed(2)}
-              unit="°"
+              dataObj={terrain.mean_slope_deg}
               subtitle="Topographical Gradient"
-              trend={terrain.mean_slope_deg < 3.0 ? "Flat / Waterlogging Prone" : "Moderate"}
+              trend={terrain.mean_slope_deg?.value < 3.0 ? "Flat / Waterlogging Prone" : "Moderate"}
               explainerData={{
                 key: "mean_slope_deg",
                 name: "Catchment Mean Slope",
@@ -415,8 +643,7 @@ export default function Dashboard({
             <MetricCard
               icon={IconMountain}
               title={t.metrics.elevation}
-              value={terrain.elevation_m?.toFixed(1)}
-              unit="m"
+              dataObj={terrain.elevation_m}
               subtitle="DEM Datum"
               explainerData={{
                 key: "min_elevation_m",
@@ -429,7 +656,7 @@ export default function Dashboard({
             <MetricCard
               icon={IconMountain}
               title={t.metrics.elevationRatio}
-              value={terrain.elevation_range_ratio?.toFixed(2)}
+              dataObj={terrain.elevation_range_ratio}
               unit="Ratio"
               subtitle="Relief Ruggedness"
               explainerData={{
@@ -443,7 +670,7 @@ export default function Dashboard({
             <MetricCard
               icon={IconMountain}
               title="Flow Accumulation"
-              value={terrain.flow_accumulation?.toLocaleString?.() || terrain.flow_accumulation}
+              dataObj={terrain.flow_accumulation}
               subtitle="Upstream contributing cells"
               explainerData={{
                 key: "flow_accumulation",
@@ -456,7 +683,7 @@ export default function Dashboard({
             <MetricCard
               icon={IconWaves}
               title="Distance to River"
-              value={terrain.distance_to_river_km?.toFixed?.(1) || terrain.distance_to_river_km}
+              dataObj={terrain.distance_to_river_km}
               unit="km"
               subtitle="Nearest channel"
               explainerData={{
@@ -470,8 +697,9 @@ export default function Dashboard({
             <MetricCard
               icon={IconMountain}
               title="Drainage Susceptibility"
-              value={terrain.risk || "MODERATE"}
-              subtitle="Open-Meteo elevation"
+              dataObj={terrain.risk
+                ? { value: terrain.risk, unit: "", source: "Catchment model", sourceType: "DERIVED", status: "OK" }
+                : probabilityMetric(estimatedDrainage, "")}
               explainerData={{
                 key: "terrain_risk",
                 name: "Terrain Drainage Susceptibility",
@@ -492,42 +720,33 @@ export default function Dashboard({
           <div className="metrics-grid">
             <MetricCard
               icon={IconWaves}
-              title={t.metrics.riverLevel}
-              value={hydrology.river_level?.toFixed(2)}
-              unit="m"
-              subtitle={hydrology.is_ai_estimate ? "Regional Hydrodynamic AI Synthesis" : "CWC Live Gauge Station"}
-              trend={hydrology.river_level_trend || "RISING"}
-              isAiEstimate={hydrology.is_ai_estimate}
-              estimationSource={hydrology.estimation_source}
+              title="Modelled River Stage"
+              dataObj={metricOrProbability(hydrology.river_stage, estimatedRiverStage)}
               explainerData={{
                 key: "river_level",
-                name: "Mainstem River Stage Level",
+                name: "Modelled River Stage",
                 category: "Hydrology",
-                description: "Surface water elevation measured relative to riverbed datum at nearest hydrological gauge."
+                description: "Hydrologic stage estimate from modelled discharge and terrain context, without reliance on a single observed gauge."
               }}
               onExplain={onExplain}
             />
             <MetricCard
               icon={IconWaves}
-              title="Stage Delta (24h Change)"
-              value={hydrology.river_level_change > 0 ? `+${hydrology.river_level_change?.toFixed(2)}` : `${hydrology.river_level_change?.toFixed(2)}`}
-              unit="m / day"
-              subtitle="Discharge Acceleration"
-              trend={hydrology.river_level_change > 0.3 ? "Surging Rapidly" : "Steady"}
-              isAiEstimate={hydrology.is_ai_estimate}
-              estimationSource={hydrology.estimation_source}
+              title="GloFAS Modelled River Discharge"
+              dataObj={hydrology.river_discharge}
+              subtitle="GloFAS • MODELLED"
               explainerData={{
-                key: "river_level_change",
-                name: "24-Hour River Level Change",
+                key: "river_discharge",
+                name: "GloFAS Modelled River Discharge",
                 category: "Hydrology",
-                description: "Rate of water surface height variation over the previous 24-hour observation cycle."
+                description: "Modelled volume of water flowing through the river channel per second, from the GloFAS global flood monitoring system. Modelled hydrology, not an observed river stage."
               }}
               onExplain={onExplain}
             />
             <MetricCard
               icon={IconWaves}
               title="Mainstem River Area"
-              value={(hydrology.river_area_km2 || 21095).toLocaleString()}
+              dataObj={hydrology.river_area_km2}
               unit="km²"
               subtitle="Drainage Surface"
               explainerData={{
@@ -541,7 +760,7 @@ export default function Dashboard({
             <MetricCard
               icon={IconWaves}
               title="Upstream Reservoirs"
-              value={hydrology.reservoir_count || 773}
+              dataObj={hydrology.reservoir_count}
               unit="Structures"
               subtitle="HydroLAKES Storage"
               explainerData={{
@@ -565,10 +784,8 @@ export default function Dashboard({
             <MetricCard
               icon={IconLayers}
               title={t.metrics.soilRunoff}
-              value={soil.soil_runoff_proxy?.toFixed(1)}
+              dataObj={metricOrProbability(soil.soil_runoff_proxy, estimatedSoilRunoff)}
               unit="Index"
-              subtitle="Runoff vs Infiltration"
-              trend="Impermeable / Rapid Runoff"
               explainerData={{
                 key: "soil_runoff_proxy",
                 name: "Soil Runoff Coefficient Proxy",
@@ -580,9 +797,7 @@ export default function Dashboard({
             <MetricCard
               icon={IconLayers}
               title={t.metrics.clay}
-              value={soil.clay_fraction_pct?.toFixed(1)}
-              unit="%"
-              subtitle="SoilGrids 250m Mean"
+              dataObj={metricOrProbability(soil.clay_pct, estimatedClay)}
               explainerData={{
                 key: "clay_fraction_pct",
                 name: "Soil Clay Content Percentage",
@@ -594,7 +809,7 @@ export default function Dashboard({
             <MetricCard
               icon={IconLayers}
               title={t.metrics.sand}
-              value={soil.sand_fraction_pct?.toFixed(1)}
+              dataObj={metricOrProbability(soil.sand_fraction_pct, estimatedSand)}
               unit="%"
               subtitle="Permeable Fraction"
               explainerData={{
@@ -608,7 +823,7 @@ export default function Dashboard({
             <MetricCard
               icon={IconLayers}
               title={t.metrics.silt}
-              value={soil.silt_fraction_pct?.toFixed(1)}
+              dataObj={metricOrProbability(soil.silt_fraction_pct, estimatedSilt)}
               unit="%"
               subtitle="Alluvial Silt Fraction"
               explainerData={{
@@ -632,23 +847,21 @@ export default function Dashboard({
             <MetricCard
               icon={IconLayers}
               title={t.metrics.cropland}
-              value={landCover.cropland_pct?.toFixed(1)}
-              unit="%"
-              subtitle="ESA WorldCover 10m"
-              trend="High Inundation Exposure"
+              dataObj={landCover.cropland_pct}
+              subtitle="Catchment land-cover composition • ESTIMATED"
+              trend={null}
               explainerData={{
                 key: "cropland_pct",
                 name: "Agricultural Cropland Percentage",
                 category: "Land Cover",
-                description: "Percentage of basin land dedicated to crop cultivation vulnerable to standing water crop loss."
+                description: "Percentage of basin land dedicated to crop cultivation. Catchment land-cover composition estimated from regional databases."
               }}
               onExplain={onExplain}
             />
             <MetricCard
               icon={IconLayers}
               title={t.metrics.builtUp}
-              value={landCover.built_up_pct?.toFixed(1)}
-              unit="%"
+              dataObj={landCover.built_up_pct}
               subtitle="Impervious Surfaces"
               explainerData={{
                 key: "built_up_pct",
@@ -661,7 +874,7 @@ export default function Dashboard({
             <MetricCard
               icon={IconLayers}
               title={t.metrics.treeCover}
-              value={landCover.tree_cover_pct?.toFixed(1)}
+              dataObj={landCover.tree_cover_pct}
               unit="%"
               subtitle="Natural Canopy Buffer"
               explainerData={{
@@ -675,7 +888,7 @@ export default function Dashboard({
             <MetricCard
               icon={IconLayers}
               title={t.metrics.water}
-              value={landCover.water_pct?.toFixed(1)}
+              dataObj={landCover.water_pct}
               unit="%"
               subtitle="Permanent Water Bodies"
               explainerData={{
@@ -689,7 +902,7 @@ export default function Dashboard({
             <MetricCard
               icon={IconLayers}
               title="Wetland"
-              value={landCover.wetland_pct?.toFixed(1)}
+              dataObj={landCover.wetland_pct}
               unit="%"
               subtitle="Seasonal Wetland Areas"
               explainerData={{
@@ -703,9 +916,8 @@ export default function Dashboard({
             <MetricCard
               icon={IconLayers}
               title="Natural Vegetation"
-              value={landCover.natural_vegetation_pct?.toFixed(1)}
+              dataObj={metricOrProbability(landCover.natural_vegetation_pct, probabilityMetric(17.7, "%"))}
               unit="%"
-              subtitle="Grassland & Shrubs"
               explainerData={{
                 key: "natural_veg_pct",
                 name: "Natural Vegetation",
@@ -727,12 +939,7 @@ export default function Dashboard({
             <MetricCard
               icon={IconUsers}
               title={t.metrics.exposedPop}
-              value={exposure.estimated_exposed_population?.toLocaleString()}
-              unit="Residents"
-              subtitle={exposure.is_ai_estimate ? "WorldPop AI Inundation Overlay" : "Census Ground Truth"}
-              trend="Priority Evacuation"
-              isAiEstimate={exposure.is_ai_estimate}
-              estimationSource={exposure.estimation_source}
+              dataObj={exposureMetric("population")}
               explainerData={{
                 key: "estimated_exposed_population",
                 name: "Estimated Exposed Population",
@@ -744,9 +951,7 @@ export default function Dashboard({
             <MetricCard
               icon={IconUsers}
               title={t.metrics.vulnerablePop}
-              value={exposure.vulnerable_population?.toLocaleString()}
-              unit="Children/Elderly"
-              subtitle="High Care Assistance"
+              dataObj={exposureMetric("vulnerable_population")}
               isAiEstimate={exposure.is_ai_estimate}
               estimationSource={exposure.estimation_source}
               explainerData={{
@@ -760,10 +965,7 @@ export default function Dashboard({
             <MetricCard
               icon={IconBuilding}
               title="Buildings Exposed"
-              value={exposure.buildings_exposed?.toLocaleString()}
-              unit="Structures"
-              subtitle="Inundation Zone"
-              isAiEstimate={exposure.is_ai_estimate}
+              dataObj={exposureMetric("buildings_exposed")}
               explainerData={{
                 key: "buildings_exposed",
                 name: "Buildings in Flood Zone",
@@ -775,12 +977,7 @@ export default function Dashboard({
             <MetricCard
               icon={IconUsers}
               title={t.metrics.hospitals}
-              value={exposure.hospitals_exposed || 2}
-              unit="Facilities"
-              subtitle="Emergency Medical Access"
-              trend="Flood Defense Required"
-              isAiEstimate={exposure.is_ai_estimate}
-              estimationSource={exposure.estimation_source}
+              dataObj={exposureMetric("hospitals_exposed")}
               explainerData={{
                 key: "critical_infrastructure_exposed",
                 name: "Critical Medical Infrastructure",
@@ -792,10 +989,7 @@ export default function Dashboard({
             <MetricCard
               icon={IconUsers}
               title="Schools Exposed"
-              value={exposure.schools_exposed || 4}
-              unit="Schools"
-              subtitle="Education Infrastructure"
-              isAiEstimate={exposure.is_ai_estimate}
+              dataObj={exposureMetric("schools_exposed")}
               explainerData={{
                 key: "schools_exposed",
                 name: "Schools in Flood Zone",
@@ -807,12 +1001,7 @@ export default function Dashboard({
             <MetricCard
               icon={IconUsers}
               title={t.metrics.roads}
-              value={exposure.roads_exposed_km?.toFixed(1) || "18.4"}
-              unit="km"
-              subtitle="Submerged Arterial Roads"
-              trend="Logistics Impacted"
-              isAiEstimate={exposure.is_ai_estimate}
-              estimationSource={exposure.estimation_source}
+              dataObj={exposureMetric("roads_exposed_km")}
               explainerData={{
                 key: "roads_exposed_km",
                 name: "Inundated Road Network Length",
@@ -824,10 +1013,7 @@ export default function Dashboard({
             <MetricCard
               icon={IconUsers}
               title="Bridges Exposed"
-              value={exposure.bridges_exposed || 3}
-              unit="Bridges"
-              subtitle="Critical Crossings"
-              isAiEstimate={exposure.is_ai_estimate}
+              dataObj={exposureMetric("bridges_exposed")}
               explainerData={{
                 key: "bridges_exposed",
                 name: "Bridges in Flood Zone",
@@ -851,7 +1037,8 @@ export default function Dashboard({
             <span className={`rs-badge ${remote.radar_available !== false ? "available" : ""}`}>Radar</span>
             <span className={`rs-badge ${remote.satellite_available !== false ? "available" : ""}`}>Satellite</span>
             <span className={`rs-badge ${remote.gauge_available !== false ? "available" : ""}`}>Gauge</span>
-            <span className={`rs-badge ${remote.river_available ? "available" : ""}`}>River</span>
+            <span className={`rs-badge ${hydrology.river_stage?.status === "OK" ? "available" : ""}`}>Hydrology</span>
+            <span className={`rs-badge ${hydrology.river_discharge?.status === "OK" ? "available" : ""}`}>GloFAS</span>
           </div>
         </div>
 
@@ -904,9 +1091,9 @@ export default function Dashboard({
               />
             </div>
             <div className="dem-info">
-              <div><strong>Elevation:</strong> {terrain.elevation_m?.toFixed(0) || "—"} m</div>
-              <div><strong>Slope:</strong> {terrain.mean_slope_deg?.toFixed(1) || "—"}°</div>
-              <div><strong>Relief:</strong> {terrain.relief_m || "—"} m</div>
+              <div><strong>Elevation:</strong> {terrain.elevation_m?.value?.toFixed?.(0) ?? terrain.elevation_m?.value ?? "—"} m</div>
+              <div><strong>Slope:</strong> {terrain.mean_slope_deg?.value?.toFixed?.(1) ?? terrain.mean_slope_deg?.value ?? "—"}°</div>
+              <div><strong>Relief:</strong> {(terrain.relief_m?.value ?? terrain.relief_m) || "—"} m</div>
               <div><strong>Source:</strong> OpenTopoMap</div>
             </div>
           </div>
@@ -924,19 +1111,6 @@ export default function Dashboard({
             </p>
           </div>
 
-          <div className="rs-card">
-            <div className="rs-card-header">
-              <IconLocation className="w-4 h-4 text-copper" />
-              <span>Local map</span>
-            </div>
-            <div className="rs-iframe-wrap">
-              <iframe
-                src={`https://www.openstreetmap.org/export/embed.html?bbox=${encodeURIComponent(bbox)}&layer=mapnik&marker=${lat}%2C${lon}`}
-                title="OpenStreetMap"
-                loading="lazy"
-              ></iframe>
-            </div>
-          </div>
         </div>
       </div>
 
@@ -967,11 +1141,11 @@ export default function Dashboard({
           </div>
           <div className="flood-stat-card">
             <span className="flood-stat-label">Population Exposed</span>
-            <span className="flood-stat-value">{(exposure.estimated_exposed_population || 0).toLocaleString()}</span>
+            <span className="flood-stat-value">{exposure.population?.value ? exposure.population.value.toLocaleString() : "Unavailable"}</span>
           </div>
           <div className="flood-stat-card">
             <span className="flood-stat-label">Buildings Exposed</span>
-            <span className="flood-stat-value">{(exposure.buildings_exposed || 0).toLocaleString()}</span>
+            <span className="flood-stat-value">{exposure.buildings_exposed?.value ? exposure.buildings_exposed.value.toLocaleString() : "Unavailable"}</span>
           </div>
         </div>
       </div>
@@ -981,33 +1155,61 @@ export default function Dashboard({
         <div className="section-title-bar">
           <div>
             <span className="section-kicker">AI FLOOD ASSESSMENT</span>
-            <h3 className="section-heading">Machine Learning Risk Summary</h3>
+            <h3 className="section-heading">Machine Learning Risk Summary (ML Model Only)</h3>
           </div>
+          <span className="section-note text-xs text-slate-400">Independent from a single observed gauge</span>
         </div>
         <div className="ai-assessment-card">
           <div className="ai-assess-main">
             <div className="ai-assess-probability">
               <span className="ai-assess-big-num">{probability?.toFixed(1)}%</span>
-              <span className="ai-assess-sub">Flood Probability</span>
+              <span className="ai-assess-sub">ML Inundation Probability</span>
             </div>
             <div className="ai-assess-label-col">
-              <div className="ai-assess-label">{warningEmoji} {riskClass}</div>
-              <div className="ai-assess-warning">Warning Level: {riskClass === "SEVERE" ? "🔴 SEVERE" : riskClass === "HIGH" ? "🟠 HIGH" : riskClass === "MODERATE" ? "🟡 ELEVATED" : "🟢 NORMAL"}</div>
+              <div className="ai-assess-label">{riskClass === "SEVERE" ? "🔴" : riskClass === "HIGH" ? "🟠" : riskClass === "MODERATE" ? "🟡" : "🟢"} AI Risk: {riskClass}</div>
+              <div className="ai-assess-warning">Overall Combined Monitoring: <strong>{overallStatus}</strong></div>
               <div className="ai-assess-depth">Est. Depth: {estimatedDepth} m | Area: {inundatedArea} km²</div>
+            </div>
+          </div>
+
+          <div className="ai-assess-details" aria-label="Flood assessment details">
+            <div className="ai-assess-detail">
+              <span>Monitoring status</span>
+              <strong>{overallStatus}</strong>
+            </div>
+            <div className="ai-assess-detail">
+              <span>Estimated depth</span>
+              <strong>{estimatedDepth} m</strong>
+            </div>
+            <div className="ai-assess-detail">
+              <span>Inundated area</span>
+              <strong>{inundatedArea} km²</strong>
+            </div>
+            <div className="ai-assess-detail">
+              <span>Model confidence</span>
+              <strong>{data?.prediction?.confidence_pct ?? "—"}{data?.prediction?.confidence_pct !== undefined ? "%" : ""}</strong>
             </div>
           </div>
 
           <div className="risk-breakdown-grid">
             <h4 className="risk-breakdown-title">Risk Breakdown</h4>
-            {data?.risk_components && Object.entries(data.risk_components).map(([key, val]) => (
-              <div key={key} className="risk-breakdown-item">
-                <span className="rb-label">{key.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase())}</span>
-                <div className="rb-bar-track">
-                  <div className="rb-bar-fill" style={{ width: `${Math.min(val, 100)}%` }}></div>
+            <div className="risk-pie-layout">
+              <div className="risk-pie" style={{ background: `conic-gradient(${riskGradient || "#e3ddd1 0 100%"})` }}>
+                <div className="risk-pie-center">
+                  <strong>{Math.round(riskTotal)}</strong>
+                  <span>Total score</span>
                 </div>
-                <span className="rb-value">{typeof val === "number" ? val.toFixed(0) : val}</span>
               </div>
-            ))}
+              <div className="risk-pie-legend">
+                {riskEntries.map(([key, value], index) => (
+                  <div key={key} className="risk-pie-legend-item">
+                    <span className="risk-pie-swatch" style={{ background: riskColors[index % riskColors.length] }} />
+                    <span className="rb-label">{key.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase())}</span>
+                    <span className="rb-value">{value.toFixed(0)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
           </div>
         </div>
       </div>

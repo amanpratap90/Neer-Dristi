@@ -14,7 +14,7 @@ export default function MetricExplainerModal({ metric, language = "en", onClose 
 
   const translation = metric.translations?.[language] || {};
   const name = translation.name || metric.name || metric.key;
-  const description = translation.description || metric.description || "Detailed parameter used in ChetakAI hydrodynamic & flood prediction pipeline.";
+  const description = translation.description || metric.description || "Detailed parameter used in Neer Drishti hydrodynamic & flood prediction pipeline.";
   const floodImportance = metric.flood_importance || "Critical variable for predicting peak water stage, catchment saturation, and overland runoff.";
   const calculationMethod = metric.calculation_method || "Calculated from spatial raster contracts and machine learning feature pipelines.";
   const thresholds = metric.thresholds || null;

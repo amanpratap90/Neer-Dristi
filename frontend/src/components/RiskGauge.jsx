@@ -1,9 +1,10 @@
 import React from "react";
 import { IconShield, IconHelp } from "./Icons";
 
-export default function RiskGauge({ probability = 73.89, riskScore = 73.75, riskClass = "HIGH", alert = {}, onExplain }) {
+export default function RiskGauge({ probability, riskScore, riskClass = "HIGH", alert = {}, confidencePct, onExplain }) {
   const prob = Number(probability) || 0;
   const score = Number(riskScore) || 0;
+  const conf = confidencePct !== null && confidencePct !== undefined ? Number(confidencePct) : null;
 
   // SVG Gauge calculations
   const radius = 70;
@@ -33,7 +34,7 @@ export default function RiskGauge({ probability = 73.89, riskScore = 73.75, risk
             name: "Compound Flood Risk & ML Probability",
             category: "Ensemble Prediction",
             value: `${prob.toFixed(1)}% (Score: ${score.toFixed(1)}/100)`,
-            description: "Calibrated empirical probability produced by ChetakAI HistGradientBoosting & RandomForest ensemble.",
+            description: "Calibrated empirical probability produced by Neer Drishti HistGradientBoosting & RandomForest ensemble.",
             flood_importance: "Directly determines emergency civil defense response, warning trigger escalation, and shelter activation.",
             calculation_method: "Trained on 60 physical parameters combining Sentinel-1, IMD Radar, SoilGrids, and DEM slope vectors.",
             thresholds: {
@@ -83,7 +84,7 @@ export default function RiskGauge({ probability = 73.89, riskScore = 73.75, risk
       <div className="gauge-metrics-footer">
         <div className="gauge-metric-tile">
           <span className="tile-label">Compound Score</span>
-          <strong className="tile-val">{score.toFixed(1)} <span className="tile-unit">/100</span></strong>
+          <strong className="tile-val">{score ? score.toFixed(1) : "—"} <span className="tile-unit">/100</span></strong>
         </div>
         <div className="gauge-metric-tile">
           <span className="tile-label">Alert Severity</span>
@@ -91,7 +92,7 @@ export default function RiskGauge({ probability = 73.89, riskScore = 73.75, risk
         </div>
         <div className="gauge-metric-tile">
           <span className="tile-label">Model Confidence</span>
-          <strong className="tile-val text-teal">76.0%</strong>
+          <strong className="tile-val text-teal">{conf !== null ? `${conf.toFixed(1)}%` : "Unavailable"}</strong>
         </div>
       </div>
     </div>

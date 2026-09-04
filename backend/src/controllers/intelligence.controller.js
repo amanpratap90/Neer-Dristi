@@ -14,7 +14,8 @@ export async function analyze(req, res, next) {
       longitude,
       strict = false,
       lang = "en",
-      language = "en"
+      language = "en",
+      demoScenario = null
     } = req.body;
 
     if (latitude === undefined || longitude === undefined) {
@@ -43,7 +44,8 @@ export async function analyze(req, res, next) {
     const result = await generateFloodIntelligence({
       latitude: lat,
       longitude: lon,
-      language: selectedLanguage
+      language: selectedLanguage,
+      demoScenario
     });
 
     res.json(result);
@@ -51,6 +53,39 @@ export async function analyze(req, res, next) {
     next(error);
   }
 }
+
+export async function debugAnalyze(req, res, next) {
+  try {
+    const { lat, lon, language = "en", demoScenario = null } = req.query;
+
+    if (lat === undefined || lon === undefined) {
+      return res.status(400).json({ detail: "lat and lon query params required." });
+    }
+
+    const latitude = Number(lat);
+    const longitude = Number(lon);
+
+    if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+      return res.status(400).json({ detail: "lat and lon must be valid numbers." });
+    }
+
+    if (latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) {
+      return res.status(400).json({ detail: "Coordinates are outside valid geographic bounds." });
+    }
+
+    const result = await generateFloodIntelligence({
+      latitude,
+      longitude,
+      language,
+      demoScenario
+    });
+
+    res.json(result);
+  } catch (error) {
+    next(error);
+  }
+}
+
 
 export async function chat(req, res, next) {
   try {

@@ -8,16 +8,19 @@ export default function AICopilotChat({ telemetry, language = "en", apiBase, onE
   const [messages, setMessages] = useState([
     {
       sender: "ai",
-      text: telemetry?.ai_briefing?.summary || `ChetakAI Flood Copilot active for ${telemetry?.basin?.basin_name || "this catchment"}. Ask any hydrological or emergency decision questions.`,
+      text: telemetry?.ai_briefing?.summary || `Neer Drishti Flood Copilot active for ${telemetry?.basin?.basin_name || "this catchment"}. Ask any hydrological or emergency decision questions.`,
       timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
     }
   ]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
-  const messagesEndRef = useRef(null);
+  const messagesContainerRef = useRef(null);
 
   const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    const container = messagesContainerRef.current;
+    if (container) {
+      container.scrollTop = container.scrollHeight;
+    }
   };
 
   useEffect(() => {
@@ -108,7 +111,7 @@ export default function AICopilotChat({ telemetry, language = "en", apiBase, onE
         </button>
       </div>
 
-      <div className="copilot-messages-container">
+      <div ref={messagesContainerRef} className="copilot-messages-container">
         {messages.map((msg, i) => (
           <div key={i} className={`chat-bubble-wrap chat-${msg.sender}`}>
             <div className={`chat-bubble bubble-${msg.sender}`}>
@@ -127,7 +130,6 @@ export default function AICopilotChat({ telemetry, language = "en", apiBase, onE
             </div>
           </div>
         )}
-        <div ref={messagesEndRef} />
       </div>
 
       <div className="copilot-suggestions-bar">

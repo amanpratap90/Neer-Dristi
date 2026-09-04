@@ -101,9 +101,9 @@ export default function LandingPage({ onResult }) {
         }
       },
       {
-        enableHighAccuracy: true,
-        timeout: 15000,
-        maximumAge: 30000,
+        enableHighAccuracy: false,
+        timeout: 8000,
+        maximumAge: 300000,
       }
     );
   }
@@ -120,10 +120,10 @@ export default function LandingPage({ onResult }) {
     <div className="landing-page">
       <header className="site-header">
         <div className="brand">
-          <div className="brand-symbol">C</div>
+          <div className="brand-symbol" aria-hidden="true"><span className="brand-symbol-drop">◆</span></div>
 
           <div className="brand-copy">
-            <strong>ChetakAI</strong>
+            <strong>Neer Drishti</strong>
             <span>Flood Intelligence</span>
           </div>
         </div>
@@ -150,7 +150,7 @@ export default function LandingPage({ onResult }) {
             </h1>
 
             <p className="hero-lead">
-              ChetakAI combines hydrological data,
+              Neer Drishti combines hydrological data,
               satellite-informed moisture, terrain slope,
               forecast rainfall and physical basin intelligence
               to evaluate flood exposure for your exact
@@ -279,7 +279,7 @@ export default function LandingPage({ onResult }) {
             <div className="visual-card">
 
               <div className="visual-top">
-                <span>CHETAKAI INTELLIGENCE</span>
+                <span>NEER DRISHTI INTELLIGENCE</span>
 
                 <span className="visual-live">
                   ● LIVE
@@ -357,7 +357,7 @@ export default function LandingPage({ onResult }) {
         <section className="capability-section">
 
           <div className="capability-intro">
-            <span>WHY CHETAKAI</span>
+            <span>WHY NEER DRISHTI</span>
             <h2>
               One location.
               <br />
@@ -397,7 +397,7 @@ export default function LandingPage({ onResult }) {
       </main>
 
       <footer className="site-footer">
-        <span>CHETAKAI</span>
+        <span>NEER DRISHTI</span>
         <span>
           Grounded flood intelligence for local communities
         </span>

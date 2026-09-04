@@ -2,7 +2,10 @@ const FORECAST_URL = "https://api.open-meteo.com/v1/forecast";
 const ELEVATION_URL = "https://api.open-meteo.com/v1/elevation";
 const FLOOD_URL = "https://flood-api.open-meteo.com/v1/flood";
 
-async function fetchJson(url, timeoutMs = 12000) {
+const weatherCache = new Map();
+const CACHE_TTL_MS = 90 * 1000; // 90 seconds cache
+
+async function fetchJson(url, timeoutMs = 8000) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
@@ -39,6 +42,12 @@ function sumWindow(hourly = {}, field, hoursBack, hoursAhead = 0) {
 }
 
 export async function getLiveIntelligenceInputs(latitude, longitude) {
+  const cacheKey = `${Number(latitude).toFixed(4)}_${Number(longitude).toFixed(4)}`;
+  const cached = weatherCache.get(cacheKey);
+  if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
+    return cached.data;
+  }
+
   const forecastUrl = new URL(FORECAST_URL);
   forecastUrl.searchParams.set("latitude", String(latitude));
   forecastUrl.searchParams.set("longitude", String(longitude));
@@ -51,7 +60,10 @@ export async function getLiveIntelligenceInputs(latitude, longitude) {
       "wind_speed_10m",
       "precipitation",
       "rain",
-      "soil_moisture_0_to_1cm"
+      "soil_moisture_0_to_1cm",
+      "soil_moisture_1_to_3cm",
+      "soil_moisture_3_to_9cm",
+      "soil_moisture_9_to_27cm"
     ].join(",")
   );
   forecastUrl.searchParams.set(
@@ -60,9 +72,15 @@ export async function getLiveIntelligenceInputs(latitude, longitude) {
   );
   forecastUrl.searchParams.set(
     "daily",
-    ["precipitation_sum", "rain_sum", "temperature_2m_max", "temperature_2m_min"].join(",")
+    [
+      "precipitation_sum",
+      "rain_sum",
+      "temperature_2m_max",
+      "temperature_2m_min",
+      "et0_fao_evapotranspiration"
+    ].join(",")
   );
-  forecastUrl.searchParams.set("past_days", "3");
+  forecastUrl.searchParams.set("past_days", "7");
   forecastUrl.searchParams.set("forecast_days", "3");
   forecastUrl.searchParams.set("timezone", "auto");
 
@@ -113,25 +131,57 @@ export async function getLiveIntelligenceInputs(latitude, longitude) {
     ? daily.precipitation_sum.map((v) => Number(v || 0))
     : [];
 
+  // Calculate 7-day Antecedent Precipitation Index (API = sum(0.85^t * Rain_t))
+  // The first 7 entries in dailySums correspond to the past 7 days
+  let antecedentPrecipitationIndex = null;
+  if (dailySums.length >= 7) {
+    antecedentPrecipitationIndex = 0;
+    for (let i = 0; i < 7; i += 1) {
+      const dayRain = dailySums[6 - i] || 0; // index 6 is yesterday, index 5 is 2 days ago
+      antecedentPrecipitationIndex += dayRain * Math.pow(0.85, i + 1);
+    }
+    antecedentPrecipitationIndex = Number(antecedentPrecipitationIndex.toFixed(2));
+  } else if (rainfall24h !== null && rainfall72h !== null) {
+    antecedentPrecipitationIndex = Number(((rainfall24h * 0.85) + ((rainfall72h - rainfall24h) * 0.72)).toFixed(2));
+  }
+
+  // Multi-depth soil moisture
+  const sm0_1 = current.soil_moisture_0_to_1cm !== undefined ? Number(current.soil_moisture_0_to_1cm) : null;
+  const sm1_3 = current.soil_moisture_1_to_3cm !== undefined ? Number(current.soil_moisture_1_to_3cm) : null;
+  const sm3_9 = current.soil_moisture_3_to_9cm !== undefined ? Number(current.soil_moisture_3_to_9cm) : null;
+  const sm9_27 = current.soil_moisture_9_to_27cm !== undefined ? Number(current.soil_moisture_9_to_27cm) : null;
+  const rootZoneMoisture = (sm0_1 !== null && sm1_3 !== null && sm3_9 !== null && sm9_27 !== null) 
+    ? Number((sm0_1 * 0.15 + sm1_3 * 0.25 + sm3_9 * 0.35 + sm9_27 * 0.25).toFixed(3)) 
+    : null;
+
+  const evapotranspiration72h = Array.isArray(daily.et0_fao_evapotranspiration)
+    ? Number(daily.et0_fao_evapotranspiration.slice(-3).reduce((a, b) => a + Number(b || 0), 0).toFixed(2))
+    : null;
+
   const elevation =
-    elevationResult.status === "fulfilled"
-      ? Number(elevationResult.value?.elevation?.[0] ?? 50)
-      : 50;
+    elevationResult.status === "fulfilled" && Array.isArray(elevationResult.value?.elevation)
+      ? Number(elevationResult.value.elevation[0])
+      : null;
 
   const floodDaily =
     floodResult.status === "fulfilled" ? floodResult.value?.daily || {} : {};
-  const dischargeNow = Number(floodDaily.river_discharge?.[0] ?? 0);
-  const dischargeMean = Number(floodDaily.river_discharge_mean?.[0] ?? dischargeNow);
-  const dischargeMax = Number(floodDaily.river_discharge_max?.[0] ?? dischargeNow);
+  const dischargeNow = floodDaily.river_discharge?.[0] !== undefined ? Number(floodDaily.river_discharge[0]) : null;
+  const dischargeMean = floodDaily.river_discharge_mean?.[0] !== undefined ? Number(floodDaily.river_discharge_mean[0]) : null;
+  const dischargeMax = floodDaily.river_discharge_max?.[0] !== undefined ? Number(floodDaily.river_discharge_max[0]) : null;
 
-  return {
+  const result = {
     current: {
       rainfall: rainfall1h,
-      temperature: Number(current.temperature_2m ?? 28),
-      humidity: Number(current.relative_humidity_2m ?? 70),
-      pressure: Number(current.surface_pressure ?? 1010),
-      wind: Number(current.wind_speed_10m ?? 8),
-      soilMoisture: Number(current.soil_moisture_0_to_1cm ?? 0.3)
+      temperature: current.temperature_2m !== undefined ? Number(current.temperature_2m) : null,
+      humidity: current.relative_humidity_2m !== undefined ? Number(current.relative_humidity_2m) : null,
+      pressure: current.surface_pressure !== undefined ? Number(current.surface_pressure) : null,
+      wind: current.wind_speed_10m !== undefined ? Number(current.wind_speed_10m) : null,
+      soilMoisture: sm0_1,
+      soilMoisture0_1: sm0_1,
+      soilMoisture1_3: sm1_3,
+      soilMoisture3_9: sm3_9,
+      soilMoisture9_27: sm9_27,
+      rootZoneSoilMoisture: rootZoneMoisture
     },
     rainfall: {
       h1: rainfall1h,
@@ -146,7 +196,9 @@ export async function getLiveIntelligenceInputs(latitude, longitude) {
       forecast12h,
       forecast24h,
       forecast72h,
-      dailySums
+      dailySums,
+      antecedentPrecipitationIndex,
+      evapotranspiration72h
     },
     elevation,
     flood: {
@@ -161,6 +213,9 @@ export async function getLiveIntelligenceInputs(latitude, longitude) {
       flood: floodResult.status === "fulfilled" ? floodResult.value : null
     }
   };
+
+  weatherCache.set(cacheKey, { timestamp: Date.now(), data: result });
+  return result;
 }
 
 export async function getWeather(latitude, longitude) {
@@ -176,7 +231,7 @@ export async function getWeather(latitude, longitude) {
     forecast: {
       rainfall: live.rainfall.forecast72h,
       dailyRainfall: live.rainfall.dailySums,
-      confidence: 86,
+      confidence: null,
       nwpSpread: null
     },
     raw: live.raw.forecast

@@ -1,6 +1,11 @@
 import { getLiveIntelligenceInputs } from "./weather.service.js";
 import { reverseGeocode } from "./geocoding.service.js";
 import { generateDisasterBriefing } from "./llm.service.js";
+import { predictFloodRisk } from "./ml-model.service.js";
+import { getCatchmentProfile } from "./terrain-catchment.service.js";
+import { validateEnvironmentalInputs } from "./data-quality.service.js";
+import { getCWCObservation, findNearestCWCStation } from "./cwc.service.js";
+import { evaluateEnvironmentalFallback } from "./fallback.service.js";
 
 function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
@@ -12,309 +17,837 @@ function round(value, digits = 2) {
   return Number(n.toFixed(digits));
 }
 
-function classifyRisk(score) {
-  if (score >= 80) return "SEVERE";
-  if (score >= 60) return "HIGH";
-  if (score >= 35) return "MODERATE";
-  return "LOW";
-}
+function approximateExposure(probabilityPct, catchment) {
+  const source = "Hardcoded regional approximation";
+  const sourceType = "ESTIMATED";
+  const population = 145000;
+  const floodProbability = clamp((Number(probabilityPct) || 0) / 100, 0, 1);
+  const builtUpPct = Number(catchment?.land_cover?.built_up_pct) || 5;
+  const exposureFactor = clamp(0.18 + floodProbability * 0.65 + builtUpPct / 500, 0.18, 0.9);
+  const exposedPopulation = Math.round(population * exposureFactor);
+  const vulnerablePopulation = Math.round(exposedPopulation * 0.18);
+  const buildings = Math.max(1, Math.round(exposedPopulation / 5));
+  const hospitals = Math.max(1, Math.round(exposedPopulation / 120000));
+  const schools = Math.max(1, Math.round(exposedPopulation / 18000));
+  const roads = round(1.5 + Math.sqrt(exposedPopulation) * 0.08, 1);
+  const bridges = Math.max(1, Math.round(exposedPopulation / 60000));
 
-function regionalSurface(latitude, longitude, elevation) {
-  const lat = Number(latitude);
-  const gangetic = lat >= 22 && lat <= 32;
-  const coastal = elevation < 25;
-  const clay = gangetic ? 31.4 : coastal ? 26.8 : 22.5;
-  const silt = gangetic ? 39.2 : coastal ? 34.1 : 29.8;
-  const sand = round(100 - clay - silt, 1);
-  const cropland = gangetic ? 61.2 : coastal ? 38.5 : 44.0;
-  const builtUp = coastal ? 8.4 : gangetic ? 4.1 : 3.2;
-  const treeCover = gangetic ? 14.8 : 22.6;
-  const water = coastal ? 6.2 : 1.8;
-  const remaining = round(100 - cropland - builtUp - treeCover - water, 1);
+  const estimated = (value, unit) => ({ value, unit, source, sourceType, status: "ESTIMATED" });
 
   return {
-    soil: {
-      clay_fraction_pct: clay,
-      sand_fraction_pct: sand,
-      silt_fraction_pct: silt
-    },
-    land_cover: {
-      cropland_pct: cropland,
-      built_up_pct: builtUp,
-      tree_cover_pct: treeCover,
-      natural_vegetation_pct: Math.max(8, remaining),
-      water_pct: water,
-      wetland_pct: coastal ? 2.4 : 0.6
-    }
+    population: estimated(population, "people"),
+    vulnerable_population: estimated(vulnerablePopulation, "people"),
+    buildings_exposed: estimated(buildings, "buildings"),
+    hospitals_exposed: estimated(hospitals, "facilities"),
+    schools_exposed: estimated(schools, "facilities"),
+    roads_exposed_km: estimated(roads, "km"),
+    bridges_exposed: estimated(bridges, "bridges"),
+    is_ai_estimate: true,
+    estimation_source: source,
+    estimation_note: "Approximation for demonstration; not a live infrastructure or census measurement."
   };
 }
 
-function scoreFloodRisk(inputs) {
-  const rain24 = inputs.rainfall.h24;
-  const rain72 = inputs.rainfall.h72;
-  const forecast72 = inputs.rainfall.forecast72h;
-  const elevation = inputs.elevation;
-  const moisture = inputs.current.soilMoisture;
-  const dischargeRatio =
-    inputs.flood.dischargeMean > 0
-      ? inputs.flood.dischargeNow / inputs.flood.dischargeMean
-      : 1;
+/**
+ * Maps ML model flood probability (0.0 to 1.0 or 0 to 100) to consistent risk categories:
+ * 0.00 - 0.30: LOW
+ * 0.30 - 0.60: MEDIUM
+ * 0.60 - 0.80: HIGH
+ * 0.80 - 1.00: VERY HIGH
+ */
+export function mapAiRisk(probabilityOrPct) {
+  if (probabilityOrPct === null || probabilityOrPct === undefined || !Number.isFinite(Number(probabilityOrPct))) {
+    return "UNKNOWN";
+  }
+  const pct = Number(probabilityOrPct) > 1 ? Number(probabilityOrPct) : Number(probabilityOrPct) * 100;
+  if (pct >= 80) return "VERY HIGH";
+  if (pct >= 60) return "HIGH";
+  if (pct >= 30) return "MEDIUM";
+  return "LOW";
+}
 
-  const rainfallScore = clamp(rain24 * 0.45 + rain72 * 0.18, 0, 42);
-  const forecastScore = clamp(forecast72 * 0.16, 0, 18);
-  const terrainScore = elevation < 20 ? 18 : elevation < 60 ? 12 : elevation < 150 ? 7 : 3;
-  const soilScore = clamp(moisture * 22, 0, 16);
-  const hydroScore = clamp((dischargeRatio - 0.7) * 18, 0, 16);
+export function classifyRisk(score) {
+  if (score >= 78) return "VERY HIGH";
+  if (score >= 58) return "HIGH";
+  if (score >= 32) return "MEDIUM";
+  return "LOW";
+}
 
-  const riskScore = round(clamp(rainfallScore + forecastScore + terrainScore + soilScore + hydroScore, 8, 94), 2);
-  const probability = round(clamp(riskScore * 0.92 + rain24 * 0.08, 6, 96), 2);
+/**
+ * CENTRAL RISK AGGREGATION FUNCTION
+ * Synthesizes three independent signals:
+ * 1. AI_MODEL
+ * 2. CWC_GROUND_TRUTH
+ * 3. FALLBACK_ENVIRONMENTAL
+ *
+ * Deterministic Status Model:
+ * NORMAL | WATCH | HIGH ALERT | CRITICAL
+ *
+ * Confidence Model:
+ * HIGH CONFIDENCE | MEDIUM CONFIDENCE | LIMITED CONFIDENCE
+ */
+export function aggregateMultiSignalRisk({ aiSignal, cwcSignal, fallbackSignal }) {
+  let aiRisk = aiSignal?.risk || "LOW";
+  if (aiRisk === "MODERATE") aiRisk = "MEDIUM";
+  const cwcStatus = cwcSignal?.status || "UNAVAILABLE";
+  const cwcCondition = cwcSignal?.condition || "UNKNOWN";
+  const fallbackStatus = fallbackSignal?.status || "UNAVAILABLE";
+  const fallbackRisk = fallbackSignal?.risk || "LOW";
+
+  const isCwcActive = cwcStatus === "AVAILABLE";
+  const isCwcStale = cwcStatus === "STALE";
+  const isFallbackActive = fallbackStatus === "AVAILABLE";
+
+  let status = "NORMAL";
+  let confidence = "LIMITED CONFIDENCE";
+  let basis = "AI MODEL ONLY";
+  let explanation = "";
+
+  // PRIORITY RULE A: CWC is AVAILABLE
+  if (isCwcActive) {
+    basis = "AI MODEL + CWC GROUND TRUTH";
+
+    if (cwcCondition === "EXTREME") {
+      status = "CRITICAL";
+      confidence = "HIGH CONFIDENCE";
+      explanation = "CRITICAL: Observed CWC river water level has reached or exceeded the Highest Flood Level (HFL). Immediate emergency coordination required.";
+    } else if (cwcCondition === "ABOVE_DANGER") {
+      if (aiRisk === "HIGH" || aiRisk === "VERY HIGH") {
+        status = "CRITICAL";
+        confidence = "HIGH CONFIDENCE";
+        explanation = "CRITICAL: AI flood model and observed CWC river conditions both confirm severe flood inundation hazard above danger level.";
+      } else {
+        status = "HIGH ALERT";
+        confidence = "MEDIUM CONFIDENCE";
+        explanation = "HIGH ALERT: Observed CWC river conditions are ABOVE DANGER level. Physical ground-truth river stage is elevated despite lower AI model probability estimation.";
+      }
+    } else if (cwcCondition === "ABOVE_WARNING") {
+      if (aiRisk === "HIGH" || aiRisk === "VERY HIGH") {
+        status = "HIGH ALERT";
+        confidence = "HIGH CONFIDENCE";
+        explanation = "HIGH ALERT: High AI model inundation probability combined with observed river water level above CWC warning threshold.";
+      } else {
+        status = "WATCH";
+        confidence = "HIGH CONFIDENCE";
+        explanation = "WATCH: Observed CWC river water level has exceeded the official warning threshold. Enhanced river catchment surveillance active.";
+      }
+    } else {
+      // CWC is BELOW_WARNING
+      if (aiRisk === "HIGH" || aiRisk === "VERY HIGH") {
+        status = "HIGH ALERT";
+        confidence = "MEDIUM CONFIDENCE";
+        explanation = "HIGH ALERT: AI model predicts high inundation probability due to forecasted rainfall loading, though observed river stage currently remains below CWC warning mark.";
+      } else if (aiRisk === "MEDIUM") {
+        status = "WATCH";
+        confidence = "HIGH CONFIDENCE";
+        explanation = "WATCH: Moderate AI flood risk detected. River water level remains below CWC warning mark.";
+      } else {
+        status = "NORMAL";
+        confidence = "HIGH CONFIDENCE";
+        explanation = "NORMAL: Both AI flood model and observed CWC river water level are within normal baseline thresholds.";
+      }
+    }
+  } else {
+    // PRIORITY RULE B: CWC is UNAVAILABLE, STALE, or ERROR
+    if (isFallbackActive) {
+      basis = "AI MODEL + ENVIRONMENTAL FALLBACK";
+      confidence = "MEDIUM CONFIDENCE";
+
+      if (aiRisk === "HIGH" || aiRisk === "VERY HIGH") {
+        status = "HIGH ALERT";
+        explanation = fallbackRisk === "HIGH"
+          ? "HIGH ALERT: AI prediction and environmental indicators indicate elevated flood risk. Live CWC river telemetry is currently unavailable, so observed river conditions cannot be independently confirmed."
+          : "HIGH ALERT: AI model indicates elevated flood probability. Live CWC river telemetry is currently unavailable.";
+      } else if (aiRisk === "MEDIUM") {
+        if (fallbackRisk === "HIGH") {
+          status = "HIGH ALERT";
+          explanation = "HIGH ALERT: Moderate AI model risk combined with heavy environmental rainfall loading. Live CWC river telemetry is currently unavailable.";
+        } else {
+          status = "WATCH";
+          explanation = "WATCH: Moderate AI flood probability with normal-to-moderate environmental indicators. Live CWC river telemetry is currently unavailable.";
+        }
+      } else {
+        // AI is LOW
+        if (fallbackRisk === "HIGH") {
+          status = "WATCH";
+          explanation = "WATCH: Heavy environmental precipitation loading detected. Flood danger is not confirmed because live CWC river telemetry is currently unavailable.";
+        } else {
+          status = "NORMAL";
+          explanation = "NORMAL: AI flood model and environmental indicators are both within normal baseline thresholds. Live CWC river telemetry is currently unavailable.";
+        }
+      }
+    } else {
+      // Both CWC and Fallback are UNAVAILABLE
+      basis = "AI MODEL ONLY";
+      confidence = "LIMITED CONFIDENCE";
+
+      if (aiRisk === "HIGH" || aiRisk === "VERY HIGH") {
+        status = "HIGH ALERT";
+        explanation = "HIGH ALERT: AI prediction indicates elevated flood probability. Live CWC river telemetry and environmental fallback are unavailable.";
+      } else if (aiRisk === "MEDIUM") {
+        status = "WATCH";
+        explanation = "WATCH: Moderate AI flood probability. Live CWC river telemetry is currently unavailable.";
+      } else {
+        status = "NORMAL";
+        explanation = "NORMAL: Normal monitoring based on AI model. Live CWC gauge telemetry is currently unavailable (Limited Confidence).";
+      }
+    }
+
+    if (isCwcStale) {
+      explanation += " (Note: CWC telemetry available but stale — older than 24 hours).";
+    }
+  }
+
+  console.log(`[RISK] AI=${aiRisk} CWC=${cwcCondition} (${cwcStatus}) FALLBACK=${fallbackRisk} -> Overall=${status} (${confidence}) Basis=${basis}`);
 
   return {
-    riskScore,
-    probability,
-    riskClass: classifyRisk(riskScore),
-    components: {
-      model_probability: probability,
-      rainfall: round(clamp(rain24 * 1.1 + rain72 * 0.2, 8, 100)),
-      forecast: round(clamp(forecast72 * 0.9, 8, 100)),
-      hydrology: round(clamp(40 + hydroScore * 4, 10, 100)),
-      terrain: round(clamp(30 + terrainScore * 4, 10, 100)),
-      surface_soil: round(clamp(20 + moisture * 90, 10, 100)),
-      exposure: round(clamp(35 + (elevation < 50 ? 20 : 0), 15, 90))
+    status, // NORMAL | WATCH | HIGH ALERT | CRITICAL
+    confidence, // HIGH CONFIDENCE | MEDIUM CONFIDENCE | LIMITED CONFIDENCE
+    basis, // "AI MODEL + CWC GROUND TRUTH" | "AI MODEL + ENVIRONMENTAL FALLBACK" | "AI MODEL ONLY"
+    explanation,
+    cwc_status: cwcStatus,
+    ai_risk: aiRisk,
+    fallback_risk: fallbackRisk
+  };
+}
+
+// Backwards compatibility alias
+export const computeOverallMonitoringStatus = (aiRiskClass, cwcStatus) => {
+  const result = aggregateMultiSignalRisk({
+    aiSignal: { risk: aiRiskClass },
+    cwcSignal: { status: cwcStatus === "UNAVAILABLE" ? "UNAVAILABLE" : "AVAILABLE", condition: cwcStatus },
+    fallbackSignal: { status: "AVAILABLE", risk: "LOW" }
+  });
+  return {
+    ...result,
+    message: result.explanation,
+    decisionBasis: [result.basis]
+  };
+};
+
+function calculateRiskScore(mlProbPct, rain24, rain72, forecast72, dischargeRatio, soilMoisture, elevation, exposureData) {
+  const components = {};
+  let totalWeight = 0;
+  let availableWeight = 0;
+  let weightedSum = 0;
+
+  const mlAvail = mlProbPct !== null;
+  const mlScore = mlAvail ? mlProbPct : 0;
+  components.mlScore = round(mlScore, 1);
+  if (mlAvail) { availableWeight += 0.50; weightedSum += 0.50 * mlScore; }
+  totalWeight += 0.50;
+
+  const rainAvail = rain24 !== null && rain72 !== null;
+  const rainScore = rainAvail ? clamp(rain24 * 0.5 + rain72 * 0.2, 0, 100) : 0;
+  components.rainScore = round(rainScore, 1);
+  if (rainAvail) { availableWeight += 0.15; weightedSum += 0.15 * rainScore; }
+  totalWeight += 0.15;
+
+  const nwpAvail = forecast72 !== null;
+  const nwpScore = nwpAvail ? clamp(forecast72 * 0.4, 0, 100) : 0;
+  components.nwpScore = round(nwpScore, 1);
+  if (nwpAvail) { availableWeight += 0.10; weightedSum += 0.10 * nwpScore; }
+  totalWeight += 0.10;
+
+  const hydroAvail = dischargeRatio !== null;
+  const hydroScore = hydroAvail ? clamp((dischargeRatio - 0.5) * 40, 0, 100) : 0;
+  components.hydroScore = round(hydroScore, 1);
+  if (hydroAvail) { availableWeight += 0.10; weightedSum += 0.10 * hydroScore; }
+  totalWeight += 0.10;
+
+  const terrainAvail = elevation !== null;
+  const terrainScore = terrainAvail
+    ? (elevation < 20 ? 90 : elevation < 60 ? 60 : elevation < 150 ? 30 : 10)
+    : 0;
+  components.terrainScore = round(terrainScore, 1);
+  if (terrainAvail) { availableWeight += 0.05; weightedSum += 0.05 * terrainScore; }
+  totalWeight += 0.05;
+
+  const soilAvail = soilMoisture !== null;
+  const soilScore = soilAvail ? clamp(soilMoisture * 150, 0, 100) : 0;
+  components.soilScore = round(soilScore, 1);
+  if (soilAvail) { availableWeight += 0.05; weightedSum += 0.05 * soilScore; }
+  totalWeight += 0.05;
+
+  const expVal = exposureData?.population?.value;
+  const expAvail = expVal !== null && expVal !== undefined;
+  const exposureScore = expAvail ? clamp(expVal / 1000, 0, 100) : 0;
+  components.exposureScore = expAvail ? round(exposureScore, 1) : null;
+  if (expAvail) { availableWeight += 0.05; weightedSum += 0.05 * exposureScore; }
+  totalWeight += 0.05;
+
+  const scoreStatus = availableWeight >= totalWeight ? "COMPLETE"
+    : availableWeight >= totalWeight * 0.70 ? "PARTIAL"
+    : "INSUFFICIENT";
+
+  const riskScore = availableWeight > 0 ? round(weightedSum / availableWeight, 2) : null;
+
+  return {
+    riskScore: scoreStatus !== "INSUFFICIENT" ? riskScore : null,
+    scoreStatus,
+    availableWeight: round(availableWeight, 2),
+    totalWeight: round(totalWeight, 2),
+    components
+  };
+}
+
+/**
+ * Builds demo mode synthetic payload for presentation and hackathon evaluation.
+ */
+function buildDemoScenario(scenarioNum, latitude, longitude, language, place) {
+  const num = Number(scenarioNum) || 1;
+  const nowIso = new Date().toISOString();
+  const address = place?.reverseGeocode || {};
+  const basinName = address.city || address.district || "Varanasi (Ganga Basin)";
+
+  // Predefined scenarios from Prompt Section 12
+  const scenarios = {
+    1: {
+      name: "Scenario 1: Baseline Normal Hydrology",
+      ai: { probability: 6.7, risk: "LOW" },
+      cwc: {
+        source: "CWC",
+        status: "AVAILABLE",
+        station: "Varanasi (Ganga)",
+        station_id: "CWC_006-MGD3VNS",
+        river: "Ganga",
+        distance_km: 0.0,
+        water_level_m: 68.20,
+        warning_level_m: 70.262,
+        danger_level_m: 71.262,
+        extreme_level_m: 73.901,
+        condition: "BELOW_WARNING",
+        updated_at: nowIso,
+        reason: null
+      },
+      fallback: {
+        source: "FALLBACK_ENVIRONMENTAL",
+        status: "AVAILABLE",
+        risk: "LOW",
+        rainfall_mm: 4.5,
+        forecast_rainfall_mm: 12.0,
+        river_proximity: "NEAR",
+        summary: "Normal environmental precipitation and hydrologic baseline."
+      }
     },
-    drivers: [
-      { feature: "rainfall_sum_mm", model_importance: clamp(rain72 / 400, 0.08, 0.28) },
-      { feature: "obs_rain_variability_proxy", model_importance: clamp(rain24 / 180, 0.06, 0.22) },
-      { feature: "reservoir_area_km2", model_importance: clamp(hydroScore / 80, 0.05, 0.18) },
-      { feature: "river_area_km2", model_importance: clamp(dischargeRatio / 8, 0.05, 0.16) },
-      { feature: "basin_area_km2", model_importance: 0.09 },
-      { feature: "radar_spatial_variability_proxy", model_importance: clamp(forecast72 / 280, 0.04, 0.14) }
-    ]
+    2: {
+      name: "Scenario 2: Moderate Model Risk + High Environmental Fallback (CWC Unavailable)",
+      ai: { probability: 45.0, risk: "MEDIUM" },
+      cwc: {
+        source: "CWC",
+        status: "UNAVAILABLE",
+        station: "Varanasi (Ganga)",
+        station_id: "CWC_006-MGD3VNS",
+        river: "Ganga",
+        distance_km: 0.0,
+        water_level_m: null,
+        warning_level_m: 70.262,
+        danger_level_m: 71.262,
+        extreme_level_m: 73.901,
+        condition: "UNKNOWN",
+        updated_at: null,
+        reason: "Live CWC telemetry is currently unavailable."
+      },
+      fallback: {
+        source: "FALLBACK_ENVIRONMENTAL",
+        status: "AVAILABLE",
+        risk: "HIGH",
+        rainfall_mm: 85.0,
+        forecast_rainfall_mm: 120.0,
+        river_proximity: "NEAR",
+        summary: "Heavy 24h rainfall loading and near river proximity."
+      }
+    },
+    3: {
+      name: "Scenario 3: High AI Model Flood Risk + High Environmental Fallback (CWC Unavailable)",
+      ai: { probability: 72.5, risk: "HIGH" },
+      cwc: {
+        source: "CWC",
+        status: "UNAVAILABLE",
+        station: "Varanasi (Ganga)",
+        station_id: "CWC_006-MGD3VNS",
+        river: "Ganga",
+        distance_km: 0.0,
+        water_level_m: null,
+        warning_level_m: 70.262,
+        danger_level_m: 71.262,
+        extreme_level_m: 73.901,
+        condition: "UNKNOWN",
+        updated_at: null,
+        reason: "Live CWC telemetry is currently unavailable."
+      },
+      fallback: {
+        source: "FALLBACK_ENVIRONMENTAL",
+        status: "AVAILABLE",
+        risk: "HIGH",
+        rainfall_mm: 95.0,
+        forecast_rainfall_mm: 140.0,
+        river_proximity: "NEAR",
+        summary: "Torrential cumulative precipitation and catchment saturation."
+      }
+    },
+    4: {
+      name: "Scenario 4: Confirmed Severe Inundation (High AI + CWC Above Danger Level)",
+      ai: { probability: 78.4, risk: "HIGH" },
+      cwc: {
+        source: "CWC",
+        status: "AVAILABLE",
+        station: "Varanasi (Ganga)",
+        station_id: "CWC_006-MGD3VNS",
+        river: "Ganga",
+        distance_km: 0.0,
+        water_level_m: 71.85,
+        warning_level_m: 70.262,
+        danger_level_m: 71.262,
+        extreme_level_m: 73.901,
+        condition: "ABOVE_DANGER",
+        updated_at: nowIso,
+        reason: null
+      },
+      fallback: {
+        source: "FALLBACK_ENVIRONMENTAL",
+        status: "AVAILABLE",
+        risk: "HIGH",
+        rainfall_mm: 110.0,
+        forecast_rainfall_mm: 160.0,
+        river_proximity: "NEAR",
+        summary: "Extreme meteorological loading aligning with dangerous river stage."
+      }
+    },
+    5: {
+      name: "Scenario 5: Ground-Truth Gauge Surge (Low AI + CWC Above Danger Level)",
+      ai: { probability: 6.7, risk: "LOW" },
+      cwc: {
+        source: "CWC",
+        status: "AVAILABLE",
+        station: "Varanasi (Ganga)",
+        station_id: "CWC_006-MGD3VNS",
+        river: "Ganga",
+        distance_km: 0.0,
+        water_level_m: 71.80,
+        warning_level_m: 70.262,
+        danger_level_m: 71.262,
+        extreme_level_m: 73.901,
+        condition: "ABOVE_DANGER",
+        updated_at: nowIso,
+        reason: null
+      },
+      fallback: {
+        source: "FALLBACK_ENVIRONMENTAL",
+        status: "AVAILABLE",
+        risk: "HIGH",
+        rainfall_mm: 88.0,
+        forecast_rainfall_mm: 130.0,
+        river_proximity: "NEAR",
+        summary: "Ground-truth river surge detected above danger level."
+      }
+    }
+  };
+
+  const selected = scenarios[num] || scenarios[1];
+
+  const overall = aggregateMultiSignalRisk({
+    aiSignal: selected.ai,
+    cwcSignal: selected.cwc,
+    fallbackSignal: selected.fallback
+  });
+
+  return {
+    status: "OK",
+    is_demo: true,
+    demo_scenario: num,
+    demo_scenario_name: selected.name,
+    demo_banner: "⚠ DEMO MODE — SYNTHETIC DATA — NOT LIVE OBSERVATION",
+    generated_at: nowIso,
+    location: {
+      latitude: Number(latitude),
+      longitude: Number(longitude),
+      basin_name: basinName,
+      basin_id: "CWC_BASIN_DEMO",
+      country: "India",
+      state: "Uttar Pradesh",
+      district: "Varanasi",
+      display_name: `${round(latitude, 4)}, ${round(longitude, 4)} (Demo Simulation)`
+    },
+    ai_risk_status: {
+      source: "AI_MODEL",
+      probability: selected.ai.probability,
+      risk: selected.ai.risk,
+      label: selected.ai.risk,
+      sourceType: "MODELLED"
+    },
+    cwc_ground_truth: selected.cwc,
+    fallback_environmental: selected.fallback,
+    overall_monitoring: overall,
+
+    prediction: {
+      flood_probability: selected.ai.probability / 100,
+      flood_probability_pct: selected.ai.probability,
+      risk_class: selected.ai.risk,
+      risk_score: selected.ai.probability,
+      confidence_pct: 95.0,
+      model_name: "ChetakAI ML (Demo Mode)",
+      status: "OK",
+      is_real_ml: false
+    },
+    alert: {
+      level: overall.status,
+      severity: overall.status,
+      active: overall.status !== "NORMAL"
+    },
+    current_weather: {
+      rainfall_1h: { value: 2.0, unit: "mm", source: "Demo", sourceType: "OBSERVED", status: "OK" },
+      rainfall_3h: { value: 6.0, unit: "mm", source: "Demo", sourceType: "OBSERVED", status: "OK" },
+      rainfall_6h: { value: 12.0, unit: "mm", source: "Demo", sourceType: "OBSERVED", status: "OK" },
+      rainfall_12h: { value: 24.0, unit: "mm", source: "Demo", sourceType: "OBSERVED", status: "OK" },
+      rainfall_24h: { value: selected.fallback.rainfall_mm, unit: "mm", source: "Demo", sourceType: "OBSERVED", status: "OK" },
+      rainfall_72h: { value: selected.fallback.rainfall_mm * 1.5, unit: "mm", source: "Demo", sourceType: "OBSERVED", status: "OK" },
+      temperature: { value: 28.5, unit: "°C", source: "Demo", sourceType: "OBSERVED", status: "OK" },
+      humidity: { value: 85, unit: "%", source: "Demo", sourceType: "OBSERVED", status: "OK" },
+      pressure: { value: 1008, unit: "hPa", source: "Demo", sourceType: "OBSERVED", status: "OK" },
+      wind_speed: { value: 18, unit: "km/h", source: "Demo", sourceType: "OBSERVED", status: "OK" }
+    },
+    forecast: {
+      nwp_rain_72h: { value: selected.fallback.forecast_rainfall_mm, unit: "mm", source: "Demo NWP", sourceType: "FORECAST", status: "OK" }
+    },
+    terrain: {
+      elevation_m: { value: 76.0, unit: "m", source: "Demo DEM", sourceType: "OBSERVED", status: "OK" },
+      mean_slope_deg: { value: 2.4, unit: "°", source: "Derived", sourceType: "DERIVED", status: "OK" }
+    },
+    hydrology: {
+      river_stage: {
+        value: selected.cwc.water_level_m,
+        unit: "m",
+        source: "CWC",
+        sourceType: selected.cwc.status === "AVAILABLE" ? "OBSERVED" : "UNAVAILABLE",
+        status: selected.cwc.status === "AVAILABLE" ? "OK" : "UNAVAILABLE",
+        warningLevel: selected.cwc.warning_level_m,
+        dangerLevel: selected.cwc.danger_level_m,
+        hfl: selected.cwc.extreme_level_m,
+        gaugeId: selected.cwc.station_id,
+        gaugeName: selected.cwc.station,
+        river: selected.cwc.river
+      },
+      river_discharge: {
+        value: 17537.8,
+        unit: "m³/s",
+        source: "GloFAS",
+        sourceType: "MODELLED",
+        label: "GloFAS Modelled River Discharge",
+        status: "OK"
+      }
+    },
+    land_cover: {
+      cropland_pct: { value: 72.5, unit: "%", source: "Catchment DB", sourceType: "ESTIMATED", status: "OK" }
+    },
+    exposure: approximateExposure(selected.ai.probability),
   };
 }
 
 export async function generateFloodIntelligence({
   latitude,
   longitude,
-  language = "en"
+  language = "en",
+  demoScenario = null
 }) {
   const [live, place] = await Promise.all([
     getLiveIntelligenceInputs(latitude, longitude),
     reverseGeocode(latitude, longitude).catch(() => null)
   ]);
 
-  const scored = scoreFloodRisk(live);
-  const surface = regionalSurface(latitude, longitude, live.elevation);
+  // If a synthetic demo scenario is requested, produce presentation payload
+  if (demoScenario && Number(demoScenario) >= 1 && Number(demoScenario) <= 5) {
+    console.log(`[DEMO] Serving synthetic scenario ${demoScenario}`);
+    const demoPayload = buildDemoScenario(demoScenario, latitude, longitude, language, place);
+    const briefing = generateDisasterBriefing({ telemetry: demoPayload, language });
+    return {
+      ...demoPayload,
+      ai_briefing: briefing
+    };
+  }
+
+  // LIVE MODE: Run actual live API and model calculations
+  console.log(`[LIVE] Running physical multi-signal analysis for ${latitude}, ${longitude}`);
+
+  const nearestStation = findNearestCWCStation(latitude, longitude);
+  const [cwcObservation, catchment, quality] = await Promise.all([
+    getCWCObservation(latitude, longitude).catch(err => {
+      console.warn(`[CWC] Unhandled error: ${err.message}`);
+      return {
+        source: "CWC",
+        status: "ERROR",
+        reason: err.message,
+        station: null,
+        distance_km: null,
+        water_level_m: null,
+        condition: "UNKNOWN"
+      };
+    }),
+    getCatchmentProfile(latitude, longitude, live.elevation),
+    validateEnvironmentalInputs(live)
+  ]);
+
+  // 1. SIGNAL 1: AI MODEL (Kept completely independent)
+  const mlResult = predictFloodRisk(live, catchment);
+  const isMlActive = mlResult && mlResult.status !== "INSUFFICIENT_DATA";
+  const mlProbPct = isMlActive ? mlResult.flood_probability_pct : null;
+  const aiRisk = isMlActive ? mapAiRisk(mlProbPct) : "UNKNOWN";
+
+  const aiSignal = {
+    source: "AI_MODEL",
+    probability: mlProbPct !== null ? round(mlProbPct / 100, 3) : null,
+    probability_pct: mlProbPct,
+    risk: aiRisk,
+    model_name: mlResult ? (mlResult.modelName || "ChetakAI ML") : "NONE",
+    confidence_pct: isMlActive ? mlResult.confidencePct : null
+  };
+
+  // 2. SIGNAL 2: CWC GROUND TRUTH
+  const cwcSignal = {
+    source: "CWC",
+    status: cwcObservation.status, // AVAILABLE | UNAVAILABLE | STALE | ERROR
+    station: cwcObservation.station || (cwcObservation.station_name ? `${cwcObservation.station_name} (${cwcObservation.river})` : "Nearest CWC Station"),
+    station_name: cwcObservation.station_name || null,
+    station_id: cwcObservation.station_id || null,
+    river: cwcObservation.river || null,
+    distance_km: cwcObservation.distance_km ?? null,
+    water_level_m: cwcObservation.water_level_m ?? null,
+    warning_level_m: cwcObservation.warning_level_m ?? null,
+    danger_level_m: cwcObservation.danger_level_m ?? null,
+    extreme_level_m: cwcObservation.extreme_level_m ?? null,
+    condition: cwcObservation.condition || "UNKNOWN",
+    updated_at: cwcObservation.updated_at ?? null,
+    reason: cwcObservation.reason || null,
+    data_source: cwcObservation.data_source
+  };
+
+  // 3. SIGNAL 3: FALLBACK ENVIRONMENTAL
+  const fallbackSignal = evaluateEnvironmentalFallback({
+    live,
+    catchment,
+    nearestStationDistanceKm: cwcObservation.distance_km
+  });
+
+  // 4. CENTRAL RISK AGGREGATION
+  const overallMonitoring = aggregateMultiSignalRisk({
+    aiSignal,
+    cwcSignal,
+    fallbackSignal
+  });
+
+  // Calculate legacy risk score for detailed components breakdown
+  const dischargeMean = live.flood.dischargeMean;
+  const dischargeNow = live.flood.dischargeNow;
+  const dischargeRatio = (dischargeNow !== null && dischargeMean > 0) ? dischargeNow / dischargeMean : null;
+
+  const exposure = approximateExposure(mlProbPct, catchment);
+  const exposureData = {
+    population: exposure.population,
+    buildings: exposure.buildings_exposed
+  };
+
+  const { riskScore, scoreStatus, components } = calculateRiskScore(
+    mlProbPct, 
+    live.rainfall.h24, 
+    live.rainfall.h72, 
+    live.rainfall.forecast72h, 
+    dischargeRatio, 
+    live.current.soilMoisture, 
+    live.elevation,
+    exposureData
+  );
+
   const address = place?.reverseGeocode || {};
   const displayName = place?.displayName || `${round(latitude, 4)}, ${round(longitude, 4)}`;
-  const basinName =
-    address.city ||
-    address.district ||
-    address.state ||
-    "Local Catchment";
+  const basinName = address.city || address.district || catchment.basin_name || address.state || "Regional Catchment";
 
-  const slope = live.elevation < 30 ? 1.8 : live.elevation < 80 ? 3.4 : live.elevation < 200 ? 6.1 : 11.2;
-  const runoff = round(40 + live.current.soilMoisture * 90 + (live.rainfall.h24 > 40 ? 12 : 0), 1);
-  const riverLevel = round(
-    2.4 + live.rainfall.h72 / 55 + (live.flood.dischargeMean > 0 ? live.flood.dischargeNow / Math.max(live.flood.dischargeMean, 1) : 1) * 1.8,
-    2
-  );
-  const riverChange = round(live.rainfall.h24 / 80 - 0.05, 2);
-  const density = 180 + surface.land_cover.built_up_pct * 40;
-  const exposed = Math.round(clamp(scored.probability * density * 1.8, 400, 28000));
-  const clay = surface.soil.clay_fraction_pct;
-  const sand = surface.soil.sand_fraction_pct;
-  const silt = surface.soil.silt_fraction_pct;
-  const soilTexture =
-    clay >= 40 ? "Clay" : sand >= 50 ? "Sandy Loam" : silt >= 40 ? "Silt Loam" : "Loam";
-  const soilMoistureLabel =
-    live.current.soilMoisture > 0.45 ? "HIGH" : live.current.soilMoisture > 0.25 ? "MEDIUM" : "LOW";
-  const runoffPotential = runoff > 70 ? "HIGH" : runoff > 45 ? "MEDIUM" : "LOW";
-  const infiltrationPotential = sand > 45 ? "HIGH" : clay > 35 ? "LOW" : "MEDIUM";
-  const flowAccumulation = Math.round(8000 + (100 - live.elevation) * 420 + live.flood.dischargeNow * 18);
-  const distanceToRiver = round(clamp(0.4 + live.elevation / 90, 0.3, 12), 1);
-  const reliefM = round(Math.max(8, live.elevation * 0.55 + slope * 6), 0);
-  const inundatedArea = round(clamp(exposed / 530, 0.4, 80), 1);
-  const estimatedDepth = round(0.3 + (scored.probability / 100) * 1.2, 2);
-  const maxDepth = round(estimatedDepth * 1.5, 2);
-  const agriExposed = round(inundatedArea * (surface.land_cover.cropland_pct / 100), 1);
-  const buildings = Math.round(exposed / 4.8);
-  const basinSlug = String(basinName)
-    .toUpperCase()
-    .replace(/[^A-Z0-9]+/g, "_")
-    .replace(/^_|_$/g, "")
-    .slice(0, 12) || "CATCHMENT";
-  const basinId = `${basinSlug}_${String(Math.abs(Math.round(latitude * 10)) % 99).padStart(2, "0")}`;
-  const radarRain = round(live.rainfall.h1 * 1.04, 1);
-  const satelliteRain = round(live.rainfall.h1 * 0.97, 1);
-  const nwpSpread = round(Math.abs((live.rainfall.forecast24h || 0) - (live.rainfall.h24 || 0)) * 0.18 + 1.4, 1);
-  const forecastConfidence =
-    nwpSpread < 8 ? "HIGH" : nwpSpread < 18 ? "MEDIUM" : "LOW";
-  const vegetationIndex = round(0.22 + surface.land_cover.tree_cover_pct / 80 + surface.land_cover.cropland_pct / 250, 2);
-  const surfaceWetness =
-    live.current.soilMoisture > 0.4 || live.rainfall.h24 > 40 ? "HIGH" : live.rainfall.h24 > 15 ? "MEDIUM" : "LOW";
-  const infraValueCr = round(buildings * 0.018 + (exposed / 1000) * 0.4, 1);
+  const nowIso = new Date().toISOString();
+  const isCwcLive = cwcSignal.status === "AVAILABLE" && cwcSignal.water_level_m !== null;
 
   const result = {
-    status: "OK",
-    generated_at: new Date().toISOString(),
+    status: isMlActive ? "OK" : "INSUFFICIENT_DATA",
+    is_demo: false,
+    generated_at: nowIso,
     location: {
-      latitude,
-      longitude,
+      latitude: Number(latitude),
+      longitude: Number(longitude),
       basin_name: basinName,
-      basin_id: basinId,
+      basin_id: catchment.basin_id || "CWC_BASIN",
       country: address.country || "India",
-      administrative_area: address.state || "India",
       state: address.state || "India",
       district: address.district || address.city || "Monitored District",
-      sub_district: address.sub_district || address.city || null,
-      block: address.block || address.city || null,
       display_name: displayName
     },
+
+    // 1. AI Model Signal
+    ai_risk_status: {
+      source: "AI_MODEL",
+      probability: mlProbPct,
+      risk: aiRisk,
+      label: aiRisk,
+      sourceType: "MODELLED"
+    },
+
+    // 2. CWC Ground Truth Signal
+    cwc_ground_truth: cwcSignal,
+
+    // 3. Fallback Environmental Signal
+    fallback_environmental: fallbackSignal,
+
+    // 4. Overall Monitoring Decision
+    overall_monitoring: {
+      status: overallMonitoring.status, // NORMAL | WATCH | HIGH ALERT | CRITICAL
+      confidence: overallMonitoring.confidence, // HIGH CONFIDENCE | MEDIUM CONFIDENCE | LIMITED CONFIDENCE
+      basis: overallMonitoring.basis,
+      message: overallMonitoring.explanation,
+      explanation: overallMonitoring.explanation,
+      ai_risk: aiRisk,
+      cwc_status: cwcSignal.status,
+      cwc_condition: cwcSignal.condition,
+      fallback_risk: fallbackSignal.risk,
+      independence_note: "AI prediction and observed river conditions are independent signals."
+    },
+
     prediction: {
-      flood_probability: scored.probability / 100,
-      flood_probability_pct: scored.probability,
-      risk_score: scored.riskScore,
-      risk_class: scored.riskClass,
-      confidence_pct: live.flood.available ? 84.2 : 76.5,
-      model_name: "Open-Meteo + GloFAS live risk model",
-      feature_count: 6
-    },
-    alert: {
-      level: scored.riskClass,
-      severity: scored.riskClass,
-      priority: scored.riskClass === "SEVERE" ? "P1" : scored.riskClass === "HIGH" ? "P2" : "P3",
-      active: scored.riskClass !== "LOW",
-      trigger_count: scored.drivers.length,
-      triggers: scored.drivers.map((d) => d.feature)
-    },
-    risk_components: scored.components,
-    risk_drivers: scored.drivers.map((d) => d.feature),
-    current_weather: {
-      rainfall_1h: live.rainfall.h1,
-      rainfall_3h: live.rainfall.h3,
-      rainfall_6h: live.rainfall.h6,
-      rainfall_12h: live.rainfall.h12,
-      rainfall_24h: live.rainfall.h24,
-      rainfall_72h: live.rainfall.h72,
-      temperature: live.current.temperature,
-      humidity: live.current.humidity,
-      pressure: live.current.pressure,
-      wind_speed: live.current.wind
-    },
-    forecast: {
-      nwp_rain_1h: live.rainfall.forecast1h ?? round(live.rainfall.forecast24h / 24, 1),
-      nwp_rain_3h: live.rainfall.forecast3h ?? round(live.rainfall.forecast24h / 8, 1),
-      nwp_rain_6h: live.rainfall.forecast6h ?? round(live.rainfall.forecast24h / 4, 1),
-      nwp_rain_12h: live.rainfall.forecast12h ?? round(live.rainfall.forecast24h / 2, 1),
-      nwp_rain_24h: live.rainfall.forecast24h,
-      nwp_rain_72h: live.rainfall.forecast72h,
-      spread: nwpSpread,
-      confidence: forecastConfidence === "HIGH" ? 86 : forecastConfidence === "MEDIUM" ? 72 : 58,
-      confidence_label: forecastConfidence
-    },
-    terrain: {
-      elevation_m: round(live.elevation, 1),
-      mean_slope_deg: slope,
-      elevation_range_ratio: round(Math.max(1.2, live.elevation / 18), 2),
-      flow_accumulation: flowAccumulation,
-      distance_to_river_km: distanceToRiver,
-      relief_m: reliefM,
-      risk: slope < 2.5 ? "HIGH" : slope < 6 ? "MODERATE" : "LOW",
-      dem_source: "Open-Meteo elevation + OpenTopoMap DEM"
-    },
-    hydrology: {
-      river_level: riverLevel,
-      river_level_change: riverChange,
-      river_level_trend: riverChange > 0.4 ? "RISING_RAPIDLY" : riverChange > 0 ? "RISING" : "STABLE",
-      hydrological_loading:
-        riverChange > 0.4 ? "CRITICAL" : riverChange > 0 ? "HIGH" : "NORMAL",
-      river_area_km2: round(1200 + live.flood.dischargeNow * 4, 1),
-      reservoir_count: Math.max(12, Math.round(live.flood.dischargeMean / 40) || 24),
-      is_ai_estimate: !live.flood.available,
-      estimation_source: live.flood.available
-        ? "GloFAS river discharge via Open-Meteo Flood API"
-        : "Rainfall-runoff proxy from live forecast"
-    },
-    soil: {
-      ...surface.soil,
-      soil_texture: soilTexture,
-      soil_moisture: soilMoistureLabel,
-      soil_moisture_value: round(live.current.soilMoisture, 3),
-      runoff_potential: runoffPotential,
-      infiltration_potential: infiltrationPotential,
-      soil_runoff_proxy: runoff,
-      cec_mean: 210,
-      phh2o_mean: 7.0
-    },
-    land_cover: {
-      ...surface.land_cover,
-      grassland_pct: round(surface.land_cover.natural_vegetation_pct * 0.72, 1),
-      vegetation_index: vegetationIndex,
-      surface_wetness: surfaceWetness,
-      water_fraction_pct: surface.land_cover.water_pct
-    },
-    remote_sensing: {
-      radar_rainfall_mm: radarRain,
-      satellite_rainfall_mm: satelliteRain,
-      radar_available: true,
-      satellite_available: true,
-      gauge_available: true,
-      river_available: Boolean(live.flood.available),
-      dem_available: true
-    },
-    exposure: {
-      population: Math.round(exposed * 8.5),
-      population_density: Math.round(density),
-      estimated_exposed_population: exposed,
-      vulnerable_population: Math.round(exposed * 0.32),
-      buildings_exposed: buildings,
-      critical_buildings: Math.max(4, Math.round(buildings / 180)),
-      roads_exposed_km: round(exposed / 900, 1),
-      major_roads_km: round(exposed / 4200, 1),
-      railway_km: round(exposed / 5600, 1),
-      bridges_exposed: Math.max(1, Math.round(exposed / 7000)),
-      culverts: Math.max(4, Math.round(exposed / 2100)),
-      schools_exposed: Math.max(2, Math.round(exposed / 3500)),
-      hospitals_exposed: Math.max(1, Math.round(exposed / 14000)),
-      relief_centers: Math.max(2, Math.round(exposed / 9000)),
-      power_infrastructure: Math.max(2, Math.round(exposed / 8000)),
-      water_infrastructure: Math.max(2, Math.round(exposed / 10000)),
-      communication_towers: Math.max(1, Math.round(exposed / 12000)),
-      infrastructure_value_cr: infraValueCr,
-      infrastructure_risk: scored.riskClass === "LOW" ? "MODERATE" : "HIGH",
-      population_risk: scored.probability > 55 ? "HIGH" : "MODERATE",
-      is_ai_estimate: true,
-      estimation_source: "Risk-weighted population exposure estimate"
-    },
-    flood_exposure: {
-      inundated_area_km2: inundatedArea,
-      estimated_depth_m: estimatedDepth,
-      max_expected_depth_m: maxDepth,
-      population_exposed: exposed,
-      buildings_exposed: buildings,
-      roads_exposed_km: round(exposed / 900, 1),
-      bridges_exposed: Math.max(1, Math.round(exposed / 7000)),
-      schools_exposed: Math.max(2, Math.round(exposed / 3500)),
-      health_facilities_exposed: Math.max(1, Math.round(exposed / 14000)),
-      agricultural_land_km2: agriExposed,
-      overall_exposure: scored.probability > 55 ? "HIGH" : "MODERATE"
+      flood_probability: mlProbPct !== null ? mlProbPct / 100 : null,
+      flood_probability_pct: mlProbPct,
+      risk_score: riskScore,
+      risk_score_status: scoreStatus,
+      risk_class: aiRisk,
+      confidence_pct: isMlActive ? mlResult.confidencePct : null,
+      model_name: mlResult ? (mlResult.modelName || "ChetakAI ML") : "NONE",
+      feature_count: mlResult ? (mlResult.featuresUsed?.length || 0) : 0,
+      version: mlResult ? mlResult.version : "1.0.0",
+      is_real_ml: isMlActive,
+      status: mlResult ? (mlResult.status || "OK") : "UNAVAILABLE"
     },
     evidence: {
-      top_features: scored.drivers
+      top_features: isMlActive ? mlResult.drivers : []
     },
+    alert: {
+      level: overallMonitoring.status,
+      severity: overallMonitoring.status,
+      active: overallMonitoring.status !== "NORMAL" && overallMonitoring.status !== "UNKNOWN",
+      ai_level: aiRisk,
+      cwc_status: cwcSignal.status,
+      confidence: overallMonitoring.confidence
+    },
+    risk_components: components,
+
+    current_weather: {
+      rainfall_1h: { value: live.rainfall.h1, unit: "mm", source: "Open-Meteo", sourceType: "OBSERVED", observedAt: nowIso, status: live.rainfall.h1 !== null ? "OK" : "UNAVAILABLE" },
+      rainfall_3h: { value: live.rainfall.h3, unit: "mm", source: "Open-Meteo", sourceType: "OBSERVED", observedAt: nowIso, status: live.rainfall.h3 !== null ? "OK" : "UNAVAILABLE" },
+      rainfall_6h: { value: live.rainfall.h6, unit: "mm", source: "Open-Meteo", sourceType: "OBSERVED", observedAt: nowIso, status: live.rainfall.h6 !== null ? "OK" : "UNAVAILABLE" },
+      rainfall_12h: { value: live.rainfall.h12, unit: "mm", source: "Open-Meteo", sourceType: "OBSERVED", observedAt: nowIso, status: live.rainfall.h12 !== null ? "OK" : "UNAVAILABLE" },
+      rainfall_24h: { value: live.rainfall.h24, unit: "mm", source: "Open-Meteo", sourceType: "OBSERVED", observedAt: nowIso, status: live.rainfall.h24 !== null ? "OK" : "UNAVAILABLE" },
+      rainfall_72h: { value: live.rainfall.h72, unit: "mm", source: "Open-Meteo", sourceType: "OBSERVED", observedAt: nowIso, status: live.rainfall.h72 !== null ? "OK" : "UNAVAILABLE" },
+      temperature: { value: live.current.temperature, unit: "°C", source: "Open-Meteo", sourceType: "OBSERVED", observedAt: nowIso, status: live.current.temperature !== null ? "OK" : "UNAVAILABLE" },
+      humidity: { value: live.current.humidity, unit: "%", source: "Open-Meteo", sourceType: "OBSERVED", observedAt: nowIso, status: live.current.humidity !== null ? "OK" : "UNAVAILABLE" },
+      pressure: { value: live.current.pressure, unit: "hPa", source: "Open-Meteo", sourceType: "OBSERVED", observedAt: nowIso, status: live.current.pressure !== null ? "OK" : "UNAVAILABLE" },
+      wind_speed: { value: live.current.wind, unit: "km/h", source: "Open-Meteo", sourceType: "OBSERVED", observedAt: nowIso, status: live.current.wind !== null ? "OK" : "UNAVAILABLE" }
+    },
+    forecast: {
+      nwp_rain_1h: { value: live.rainfall.forecast1h, unit: "mm", source: "Open-Meteo NWP", sourceType: "FORECAST", status: live.rainfall.forecast1h !== null ? "OK" : "UNAVAILABLE" },
+      nwp_rain_3h: { value: live.rainfall.forecast3h, unit: "mm", source: "Open-Meteo NWP", sourceType: "FORECAST", status: live.rainfall.forecast3h !== null ? "OK" : "UNAVAILABLE" },
+      nwp_rain_6h: { value: live.rainfall.forecast6h, unit: "mm", source: "Open-Meteo NWP", sourceType: "FORECAST", status: live.rainfall.forecast6h !== null ? "OK" : "UNAVAILABLE" },
+      nwp_rain_12h: { value: live.rainfall.forecast12h, unit: "mm", source: "Open-Meteo NWP", sourceType: "FORECAST", status: live.rainfall.forecast12h !== null ? "OK" : "UNAVAILABLE" },
+      nwp_rain_24h: { value: live.rainfall.forecast24h, unit: "mm", source: "Open-Meteo NWP", sourceType: "FORECAST", status: live.rainfall.forecast24h !== null ? "OK" : "UNAVAILABLE" },
+      nwp_rain_72h: { value: live.rainfall.forecast72h, unit: "mm", source: "Open-Meteo NWP", sourceType: "FORECAST", status: live.rainfall.forecast72h !== null ? "OK" : "UNAVAILABLE" },
+      spread: { value: (live.rainfall.forecast24h * 0.15), unit: "mm", source: "Derived", sourceType: "DERIVED", status: live.rainfall.forecast24h !== null ? "OK" : "UNAVAILABLE" },
+      confidence: { value: null, unit: "%", source: "NWP Ensemble", sourceType: "DERIVED", status: "UNAVAILABLE" }
+    },
+    terrain: {
+      elevation_m: { value: live.elevation, unit: "m", source: "Open-Meteo DEM", sourceType: "OBSERVED", observedAt: nowIso, status: live.elevation !== null ? "OK" : "UNAVAILABLE" },
+      mean_slope_deg: { value: catchment.slope_deg, unit: "°", source: "Derived", sourceType: "DERIVED", status: catchment.slope_deg !== null ? "OK" : "UNAVAILABLE" },
+      elevation_range_ratio: { value: live.elevation ? Number((catchment.relief_m / live.elevation).toFixed(2)) : null, unit: "", source: "Derived", sourceType: "DERIVED", status: live.elevation ? "OK" : "UNAVAILABLE" },
+      flow_accumulation: { value: null, unit: "cells", source: "HydroBASINS", sourceType: "ESTIMATED", status: "UNAVAILABLE" },
+      distance_to_river_km: { value: null, unit: "km", source: "HydroSHEDS", sourceType: "ESTIMATED", status: "UNAVAILABLE" }
+    },
+    hydrology: {
+      river_stage: { 
+        value: cwcSignal.water_level_m, 
+        unit: "m", 
+        source: "CWC", 
+        sourceType: isCwcLive ? "OBSERVED" : "UNAVAILABLE", 
+        observedAt: cwcSignal.updated_at,
+        status: isCwcLive ? "OK" : "UNAVAILABLE",
+        gauge: cwcObservation?.gauge || null,
+        gaugeMatched: Boolean(cwcSignal.station_id),
+        gaugeDistanceKm: cwcSignal.distance_km,
+        gaugeId: cwcSignal.station_id,
+        gaugeName: cwcSignal.station_name,
+        river: cwcSignal.river,
+        warningLevel: cwcSignal.warning_level_m,
+        dangerLevel: cwcSignal.danger_level_m,
+        hfl: cwcSignal.extreme_level_m,
+        trend: "UNKNOWN",
+        cwcStatus: cwcSignal.condition,
+        failureReason: cwcSignal.reason,
+        dataSource: cwcSignal.data_source
+      },
+      river_discharge: { 
+        value: live.flood.dischargeNow, 
+        unit: "m³/s", 
+        source: "GloFAS", 
+        sourceType: "MODELLED", 
+        variable: "river_discharge",
+        label: "GloFAS Modelled River Discharge",
+        modelledAt: nowIso,
+        status: live.flood.dischargeNow !== null ? "OK" : "UNAVAILABLE" 
+      },
+      river_area_km2: { value: null, unit: "km²", source: "HydroLAKES", sourceType: "ESTIMATED", status: "UNAVAILABLE" },
+      reservoir_count: { value: null, unit: "", source: "GRanD", sourceType: "ESTIMATED", status: "UNAVAILABLE" }
+    },
+    soil: {
+      soil_moisture: { value: live.current.soilMoisture, unit: "m³/m³", source: "Open-Meteo", sourceType: "MODELLED", status: live.current.soilMoisture !== null ? "OK" : "UNAVAILABLE" },
+      clay_pct: { value: catchment.soil?.clay_fraction_pct ?? null, unit: "%", source: "Catchment DB", sourceType: "ESTIMATED", status: catchment.soil?.clay_fraction_pct !== undefined ? "OK" : "UNAVAILABLE" },
+      sand_fraction_pct: { value: catchment.soil?.sand_fraction_pct ?? null, unit: "%", source: "Catchment DB", sourceType: "ESTIMATED", status: catchment.soil?.sand_fraction_pct !== undefined ? "OK" : "UNAVAILABLE" },
+      silt_fraction_pct: { value: catchment.soil?.silt_fraction_pct ?? null, unit: "%", source: "Catchment DB", sourceType: "ESTIMATED", status: catchment.soil?.silt_fraction_pct !== undefined ? "OK" : "UNAVAILABLE" },
+      soil_runoff_proxy: { value: catchment.curve_number, unit: "Index", source: "NRCS CN", sourceType: "DERIVED", status: catchment.curve_number !== undefined ? "OK" : "UNAVAILABLE" }
+    },
+    land_cover: {
+      cropland_pct: { 
+        value: catchment.land_cover?.cropland_pct ?? null, 
+        unit: "%", 
+        source: "Catchment DB", 
+        sourceType: "ESTIMATED", 
+        label: "Catchment land-cover composition • ESTIMATED",
+        status: catchment.land_cover?.cropland_pct !== undefined ? "OK" : "UNAVAILABLE" 
+      },
+      built_up_pct: { value: catchment.land_cover?.built_up_pct ?? null, unit: "%", source: "Catchment DB", sourceType: "ESTIMATED", status: catchment.land_cover?.built_up_pct !== undefined ? "OK" : "UNAVAILABLE" },
+      tree_cover_pct: { value: catchment.land_cover?.tree_cover_pct ?? null, unit: "%", source: "Catchment DB", sourceType: "ESTIMATED", status: catchment.land_cover?.tree_cover_pct !== undefined ? "OK" : "UNAVAILABLE" },
+      water_pct: { value: catchment.land_cover?.water_pct ?? null, unit: "%", source: "Catchment DB", sourceType: "ESTIMATED", status: catchment.land_cover?.water_pct !== undefined ? "OK" : "UNAVAILABLE" },
+      wetland_pct: { value: catchment.land_cover?.wetland_pct ?? null, unit: "%", source: "Catchment DB", sourceType: "ESTIMATED", status: catchment.land_cover?.wetland_pct !== undefined ? "OK" : "UNAVAILABLE" },
+      natural_vegetation_pct: { value: catchment.land_cover?.natural_vegetation_pct ?? null, unit: "%", source: "Catchment DB", sourceType: "ESTIMATED", status: catchment.land_cover?.natural_vegetation_pct !== undefined ? "OK" : "UNAVAILABLE" }
+    },
+    exposure,
     data_quality: {
-      coordinate_resolution: "PASS",
-      state_resolution: "live_api",
-      basin_state_consistency: true,
-      production_status: "LIVE_API",
+      coordinate_resolution: quality.coordinate_resolution,
+      quality_score: quality.quality_score,
+      validation_status: quality.status,
+      validation_issues: quality.issues,
       source_traceable: true
     },
-    pipeline: {
-      engine: "open-meteo",
-      python_models: false
+    ml_debug: {
+      model: mlResult ? (mlResult.modelName || "NONE") : "NONE",
+      modelVersion: mlResult ? (mlResult.version || "UNKNOWN") : "UNKNOWN",
+      featureCount: isMlActive ? (mlResult.featuresUsed?.length || 0) : 0,
+      missingFeatureCount: mlResult ? (mlResult.featuresMissing?.length || 0) : 0,
+      imputedFeatureCount: 0,
+      zeroFilledFeatureCount: 0,
+      rawProbability: isMlActive ? mlResult.probability : null,
+      finalProbability: mlProbPct,
+      confidencePct: isMlActive ? mlResult.confidencePct : null,
+      treeVariance: isMlActive ? (mlResult.debug?.treeVariance ?? null) : null,
+      predictionStatus: isMlActive ? "OK" : (mlResult?.status || "UNAVAILABLE"),
+      raw_features: isMlActive ? mlResult.raw_features : null,
+      features_used: isMlActive ? mlResult.featuresUsed : [],
+      features_missing: mlResult ? mlResult.featuresMissing : [],
+      tree_count: isMlActive ? (mlResult.raw_features ? 30 : 0) : 0
     }
   };
+
+  validateAnalysisResult(result);
 
   const aiBriefing = generateDisasterBriefing({
     telemetry: result,
@@ -325,4 +858,50 @@ export async function generateFloodIntelligence({
     ...result,
     ai_briefing: aiBriefing
   };
+}
+
+function validateAnalysisResult(result) {
+  const issues = [];
+
+  function sanitize(obj, path = "") {
+    if (obj === null || obj === undefined) return;
+    if (typeof obj !== "object") return;
+
+    for (const [key, val] of Object.entries(obj)) {
+      const fullPath = path ? `${path}.${key}` : key;
+
+      if (typeof val === "number") {
+        if (Number.isNaN(val)) {
+          issues.push(`NaN detected at ${fullPath}`);
+          obj[key] = null;
+        } else if (!Number.isFinite(val)) {
+          issues.push(`Infinity detected at ${fullPath}`);
+          obj[key] = null;
+        }
+      } else if (typeof val === "object" && val !== null) {
+        if ("value" in val && typeof val.value === "number") {
+          if (Number.isNaN(val.value)) {
+            issues.push(`NaN value at ${fullPath}.value`);
+            val.value = null;
+            val.status = "UNAVAILABLE";
+          } else if (!Number.isFinite(val.value)) {
+            issues.push(`Infinity value at ${fullPath}.value`);
+            val.value = null;
+            val.status = "UNAVAILABLE";
+          }
+        }
+        sanitize(val, fullPath);
+      }
+    }
+  }
+
+  sanitize(result);
+
+  if (issues.length > 0) {
+    if (!result.data_quality) result.data_quality = {};
+    result.data_quality.validation_issues = [
+      ...(result.data_quality.validation_issues || []),
+      ...issues
+    ];
+  }
 }

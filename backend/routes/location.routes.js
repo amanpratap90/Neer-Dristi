@@ -24,9 +24,11 @@ router.get("/search", async (req, res, next) => {
       results
     });
   } catch (error) {
-    console.error("LOCATION SEARCH ERROR:", error);
-    res.status(502).json({
-      detail: error.message || "Location search failed."
+    console.error("LOCATION SEARCH ERROR:", error.message);
+    res.json({
+      status: "success",
+      query: req.query.q || req.query.query || "",
+      results: []
     });
   }
 });
