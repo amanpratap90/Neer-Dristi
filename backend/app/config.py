@@ -24,7 +24,7 @@ class Settings(BaseSettings):
     NOMINATIM_URL: str = "https://nominatim.openstreetmap.org"
     
     # CORS configuration
-    FRONTEND_ORIGINS: str = "http://localhost:5173,http://localhost:3000,http://127.0.0.1:5173,http://127.0.0.1:3000"
+    FRONTEND_ORIGINS: str = "https://neer-dristi-1.onrender.com,http://localhost:5173,http://localhost:3000,http://127.0.0.1:5173,http://127.0.0.1:3000"
 
     model_config = SettingsConfigDict(
         env_file=".env",
