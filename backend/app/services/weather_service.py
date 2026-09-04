@@ -57,7 +57,7 @@ async def get_live_intelligence_inputs(latitude: float, longitude: float) -> Dic
         "current": [
             "temperature_2m",
             "relative_humidity_2m",
-            "surface_pressure",
+            "pressure_msl",
             "wind_speed_10m",
             "precipitation"
         ],
@@ -65,7 +65,7 @@ async def get_live_intelligence_inputs(latitude: float, longitude: float) -> Dic
             "precipitation",
             "temperature_2m",
             "relative_humidity_2m",
-            "surface_pressure",
+            "pressure_msl",
             "wind_speed_10m",
             "soil_moisture_0_to_1cm",
             "soil_moisture_1_to_3cm",
@@ -177,7 +177,7 @@ async def get_live_intelligence_inputs(latitude: float, longitude: float) -> Dic
         "current": {
             "temperature": current.get("temperature_2m"),
             "humidity": current.get("relative_humidity_2m"),
-            "pressure": current.get("surface_pressure"),
+            "pressure": current.get("pressure_msl", current.get("surface_pressure")),
             "wind": current.get("wind_speed_10m"),
             "soilMoisture0_1": sm0_1,
             "soilMoisture1_3": sm1_3,
