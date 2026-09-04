@@ -1,5 +1,8 @@
 const API_BASE =
-  import.meta.env.VITE_API_BASE_URL || "https://neer-dristi.onrender.com";
+  import.meta.env.VITE_API_BASE_URL ||
+  (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1"
+    ? ""
+    : "https://neer-dristi.onrender.com");
 
 async function request(path, options = {}) {
   const response = await fetch(`${API_BASE}${path}`, {

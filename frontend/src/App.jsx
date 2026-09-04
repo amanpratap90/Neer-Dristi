@@ -15,7 +15,11 @@ import VoiceAgent from "./components/VoiceAgent";
 import MetricExplainerModal from "./components/MetricExplainerModal";
 import { languages, translations, presetLocations } from "./i18n/translations";
 
-const RAW_API_BASE = import.meta.env.VITE_API_BASE_URL || "https://neer-dristi.onrender.com";
+const RAW_API_BASE = import.meta.env.VITE_API_BASE_URL || (
+  window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1"
+    ? ""
+    : "https://neer-dristi.onrender.com"
+);
 const API_BASE = RAW_API_BASE
   .replace(/\/+$/, "")
   .replace(/\/api\/v1\/intelligence\/analyze$/, "")
