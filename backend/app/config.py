@@ -34,7 +34,13 @@ class Settings(BaseSettings):
 
     @property
     def allowed_origins(self) -> List[str]:
-        return [origin.strip() for origin in self.FRONTEND_ORIGINS.split(",") if origin.strip()]
+        configured_origins = [
+            origin.strip()
+            for origin in self.FRONTEND_ORIGINS.split(",")
+            if origin.strip()
+        ]
+        deployed_frontend = "https://neer-dristi-1.onrender.com"
+        return list(dict.fromkeys([deployed_frontend, *configured_origins]))
 
 
 settings = Settings()
