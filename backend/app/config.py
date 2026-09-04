@@ -39,7 +39,8 @@ class Settings(BaseSettings):
             for origin in self.FRONTEND_ORIGINS.split(",")
             if origin.strip()
         ]
-        return list(dict.fromkeys(configured_origins))
+        deployed_frontend = "https://neer-dristi-1.onrender.com"
+        return list(dict.fromkeys([deployed_frontend, *configured_origins]))
 
 
 settings = Settings()
